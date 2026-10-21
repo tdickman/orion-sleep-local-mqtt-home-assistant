@@ -13,7 +13,7 @@ from homeassistant.setup import async_setup_component
 from custom_components.orion_local.const import DOMAIN
 
 
-async def test_full_setup_discovery_service_and_unload(tmp_path, status):
+async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_reply):
     (tmp_path / "custom_components").symlink_to(Path(__file__).parents[1] / "custom_components")
     hass = HomeAssistant(str(tmp_path))
     hass.config.skip_pip = True
@@ -41,6 +41,11 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         await hass.async_block_till_done()
         assert entry.state is config_entries.ConfigEntryState.LOADED
         hub = entry.runtime_data
+
+        async def confirm_publish(serial, command):
+            hub._message(f"orion/{serial}/out", device_reply(command))
+
+        publish.side_effect = confirm_publish
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         await hass.async_block_till_done()
         assert hass.states.get("climate.orion_testbed_left").attributes["temperature"] == 19
@@ -99,8 +104,8 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
             "light", "turn_on", {"entity_id": light_id, "brightness_pct": 73}, blocking=True
         )
         publish.assert_awaited_once_with("TESTBED", "IB DIMMER 73")
-        # Brightness remains telemetry-driven instead of optimistic.
-        assert hass.states.get(light_id).attributes["brightness"] == 26
+        # The service returns only after the simulated device reports brightness.
+        assert hub.devices["TESTBED"]["brightness"] == 73
         status["led"].update(led_brightness=73, idle_r=255, idle_g=64, idle_b=32)
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         hub._tick(None)

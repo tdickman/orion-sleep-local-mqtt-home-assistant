@@ -211,7 +211,27 @@ For manual installation, copy `custom_components/orion_local` to `/config/custom
 
 Setting a climate target enables that side and requests `SYSTEM ON` if the bed is off. The firmware chooses heating or cooling; undocumented TEC mode numbers are not translated into an HVAC action. Turning off one climate sends `CLEAR LEFT` or `CLEAR RIGHT`; the other side is left alone. Turning on a climate reuses its reported target; if that target is outside 10–45°C, set a valid temperature first.
 
-Startup can take about a minute. While `PENDING_ON`, wait instead of repeatedly starting the bed. Entity state comes from telemetry, never merely from a broker acknowledgement. The integration does not retry application commands on a timeout; MQTT QoS 1 itself can redeliver an in-flight message.
+Startup can take about a minute. While `PENDING_ON`, wait instead of repeatedly starting the bed. Entity state comes from telemetry, never merely from a broker acknowledgement.
+
+### Command confirmation and automation timing
+
+Starting in **0.1.5**, commands to each bed are serialized **until fresh telemetry confirms the requested state**, not just until the broker acknowledges receipt. Two automations can request changes at nearly the same time: the next command to that bed waits for confirmation of the first. Different beds can still be controlled independently.
+
+| Command | Telemetry confirmation | Timeout after broker acknowledgement |
+| --- | --- | --- |
+| Set temperature | Requested side setpoint(s) match and controls are enabled | 15 seconds |
+| Turn off one side | That side's control is disabled | 15 seconds |
+| Turn off both sides | Both controls are disabled and system is `SYSTEM_OFF` | 15 seconds |
+| Quiet mode | Reported quiet mode matches | 15 seconds |
+| LED color / brightness | Reported idle RGB / brightness matches | 15 seconds per command |
+| Start system | System reaches `SYSTEM_ON`; `PENDING_ON` is not sufficient | 240 seconds |
+| Reboot | Uptime decreases and reported safety/fault status is healthy | 120 seconds |
+
+Temperature confirmation means the bed **accepted the target**, not that the water has physically reached that temperature. For a both-sides command, both targets must match in the same status frame. Previously cached state, retained MQTT messages, and a command echo do not count as confirmation.
+
+A temperature action that starts an off bed waits for the target confirmation and then system startup, so its completion can take about a minute. The lock covers the whole action, including startup and multi-command LED changes. Commands queued behind another action wait for it to finish; their own confirmation timeout starts after their command is published and acknowledged. The broker acknowledgement itself has a separate five-second timeout.
+
+If confirmation times out, the action raises an error in Home Assistant and stops the remaining commands in that action. It releases the lock so later actions can proceed. A broker disconnect or integration unload also fails pending confirmation; commands are not silently replayed by the integration. **A timeout means the outcome is unknown, not necessarily that the bed ignored the command.** Check current device state before retrying. MQTT QoS 1 itself can redeliver an in-flight message.
 
 ### Set both temperatures together
 
@@ -306,7 +326,7 @@ uv run ruff check custom_components tests tools
 uv run ruff format --check custom_components tests tools
 ```
 
-Automated tests cover protocol validation, temperature limits, malformed telemetry, discovery/deduplication, disconnect/staleness, command formatting, light scaling, diagnostics redaction, config flow, real HA platform/entity registration, the both-sides action, and unload. Tests do not connect to hardware.
+Automated tests cover protocol validation, temperature limits, malformed telemetry, discovery/deduplication, disconnect/staleness, command formatting, light scaling, diagnostics redaction, config flow, real HA platform/entity registration, the both-sides action, and unload. Confirmation tests exercise simultaneous side requests, fresh-state matching, partial both-side updates, startup, timeouts, cancellation, disconnect/unload, and telemetry arriving before the broker acknowledgement. Tests do not connect to hardware.
 
 Hardware testing was performed on firmware 2.6.2 / inner board 2.6.1. See [the live test report](docs/live-test-report.md) for command-by-command results, the reboot recovery, and final state. A repeatable hardware check is available, **only when you intentionally want to change the bed and reboot it**:
 

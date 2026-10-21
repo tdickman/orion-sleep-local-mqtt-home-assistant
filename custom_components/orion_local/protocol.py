@@ -56,6 +56,44 @@ def validate_command(command):
     raise ValueError("Unsupported Orion command")
 
 
+def command_confirmed(command: str, data: dict, before: dict) -> bool:
+    """Match a validated command against normalized, fresh device telemetry."""
+    parts = command.split()
+    if parts[0] == "SET":
+        sides = ("left", "right") if parts[1] == "BOTH" else (parts[1].lower(),)
+        targets = [float(value) for value in parts[2:]]
+        if len(sides) == 2 and len(targets) == 1:
+            targets *= 2
+        return all(
+            data.get(f"{side}_target") == target and data.get(f"{side}_enabled") is True
+            for side, target in zip(sides, targets, strict=True)
+        )
+    if parts[0] == "CLEAR":
+        sides = ("left", "right") if parts[1] == "BOTH" else (parts[1].lower(),)
+        return all(data.get(f"{side}_enabled") is False for side in sides) and (
+            parts[1] != "BOTH" or data.get("system_state") == "SYSTEM_OFF"
+        )
+    if command == "SYSTEM ON":
+        return data.get("system_state") == "SYSTEM_ON"
+    if parts[:2] == ["FAN", "QUIET"]:
+        return data.get("quiet_mode") is (parts[2] == "ON")
+    if parts[:2] == ["IB", "RGB"]:
+        return data.get("rgb") == tuple(int(value) for value in parts[2:])
+    if parts[:2] == ["IB", "DIMMER"]:
+        return data.get("brightness") == int(parts[2])
+    if command == "REBOOT":
+        uptime = data.get("uptime")
+        previous = before.get("uptime")
+        return (
+            uptime is not None
+            and previous is not None
+            and uptime < previous
+            and data.get("safety_ok") is True
+            and data.get("fault") is False
+        )
+    return False
+
+
 def parse_status(topic: str, payload: bytes):
     """Return an allowlisted flat snapshot; never retain network or sleep data."""
     parts = topic.split("/")

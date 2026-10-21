@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 
@@ -25,3 +27,30 @@ def status():
         "fw": {"version": "2.6.2"},
         "wifi": {"password": "secret"},
     }
+
+
+@pytest.fixture
+def device_reply(status):
+    """Simulate device state changes in raw telemetry, not broker ACKs."""
+
+    def reply(command):
+        parts = command.split()
+        if parts[0] in ("SET", "CLEAR"):
+            sides = ("left", "right") if parts[1] == "BOTH" else (parts[1].lower(),)
+            for index, side in enumerate(sides):
+                status["tec"][side]["control_enabled"] = parts[0] == "SET"
+                if parts[0] == "SET":
+                    status["tec"][side]["setpoint"] = float(parts[min(2 + index, len(parts) - 1)])
+            if command == "CLEAR BOTH":
+                status["system_state"] = "SYSTEM_OFF"
+        elif command == "SYSTEM ON":
+            status["system_state"] = "SYSTEM_ON"
+        elif parts[:2] == ["FAN", "QUIET"]:
+            status["fans"]["quiet_mode"] = parts[2] == "ON"
+        elif parts[:2] == ["IB", "RGB"]:
+            status["led"].update(zip(("idle_r", "idle_g", "idle_b"), map(int, parts[2:])))
+        elif parts[:2] == ["IB", "DIMMER"]:
+            status["led"]["led_brightness"] = int(parts[2])
+        return json.dumps(status).encode()
+
+    return reply
