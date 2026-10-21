@@ -4,7 +4,7 @@ import json
 import math
 import re
 
-from .const import MAX_TEMP, MIN_TEMP
+from .const import MAX_TEMP, MIN_TEMP, SLEEP_STATUS_NAMES
 
 SERIAL_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -147,12 +147,26 @@ def parse_status(topic: str, payload: bytes):
         data[f"{side}_fan_rpm"] = number(get("fans", f"{side}_rpm"))
         data[f"{side}_pump"] = text("pumps", side, "status")
         arr = get("sensors", sensor)
-        data[f"{side}_occupancy"] = (
-            arr[17] != 5
+        status = (
+            arr[17]
             if isinstance(arr, list)
             and len(arr) > 17
             and type(arr[17]) is int
             and 0 <= arr[17] <= 255
+            else None
+        )
+        data[f"{side}_sleep_status_code"] = status
+        data[f"{side}_sleep_status"] = (
+            SLEEP_STATUS_NAMES.get(status, "unknown_status") if status is not None else None
+        )
+        data[f"{side}_occupancy"] = status != 5 if status in (0, 2, 3, 4, 5, 6, 7) else None
+        # Treat the internal clock as an opaque four-byte token: changes prove
+        # activity without assuming wall time, endianness, or monotonic counters.
+        data[f"{side}_sensor_time"] = (
+            tuple(arr[11:15])
+            if isinstance(arr, list)
+            and len(arr) > 17
+            and all(type(value) is int and 0 <= value <= 255 for value in arr[11:15])
             else None
         )
         # Observed on Orion/Sleepace: index 15 tracks heart rate, index 16
@@ -160,6 +174,10 @@ def parse_status(topic: str, payload: bytes):
         # zero BPM; 0 and 255 are the cloud decoder's no-reading sentinels.
         for metric, index in (("heart_rate", 15), ("breathing_rate", 16)):
             value = arr[index] if data[f"{side}_occupancy"] is True else None
+            if (metric == "heart_rate" and status == 3) or (
+                metric == "breathing_rate" and status == 2
+            ):
+                value = None
             data[f"{side}_{metric}"] = value if type(value) is int and 0 < value < 255 else None
     rgb = tuple(number(get("led", f"idle_{c}")) for c in "rgb")
     data["rgb"] = rgb if all(v is not None and 0 <= v <= 255 for v in rgb) else None

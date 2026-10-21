@@ -127,6 +127,8 @@ async def test_diagnostics_allowlist(hub):
         "target",
         "heart_rate",
         "breathing_rate",
+        "sensor_time",
+        "sleep_status",
     ):
         assert private not in text
 
@@ -305,3 +307,72 @@ async def test_rounded_live_setpoint_confirms_without_timeout(hub, status):
     await asyncio.wait_for(task, 1)
     assert not hub.pending
     hub.mqtt.publish.assert_awaited_once_with("TESTBED", "SET RIGHT 21.3889")
+
+
+async def test_sensor_clock_freshness_is_independent_of_bed_telemetry(hub, status):
+    now = 100.0
+    with patch("custom_components.orion_local.hub.time", SimpleNamespace(monotonic=lambda: now)):
+        hub._connection(False)
+        hub._connection(True)
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        assert hub.sleep_sensor_freshness("TESTBED", "left") == "waiting_for_update"
+        assert not hub.sleep_sensor_available("TESTBED", "left")
+        # Repeated frames cannot establish sensor liveness.
+        now += 1
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        assert not hub.sleep_sensor_available("TESTBED", "left")
+        for side in ("sensor1", "sensor2"):
+            status["sensors"][side][11] += 1
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        assert hub.sleep_sensor_available("TESTBED", "left")
+        assert hub.sleep_sensor_available("TESTBED", "right")
+        # The bed and right clock continue updating while left freezes.
+        now += 29
+        status["sensors"]["sensor2"][11] += 1
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        assert hub.sleep_sensor_available("TESTBED", "left")
+        now += 1
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        assert hub.available("TESTBED")
+        assert hub.sleep_sensor_freshness("TESTBED", "left") == "stale"
+        assert not hub.sleep_sensor_available("TESTBED", "left")
+        assert hub.sleep_sensor_available("TESTBED", "right")
+        # Resumption is immediate, and decreasing/wrapping counters are valid.
+        for clock in ([0, 0, 0, 0], [255, 255, 255, 255], [0, 0, 0, 0]):
+            status["sensors"]["sensor1"][11:15] = clock
+            hub._message("orion/TESTBED/out", json.dumps(status).encode())
+            assert hub.sleep_sensor_available("TESTBED", "left")
+
+
+async def test_clock_must_advance_again_after_disconnect_or_invalid_clock(hub, status):
+    status["sensors"]["sensor1"][11] += 1
+    hub._message("orion/TESTBED/out", json.dumps(status).encode())
+    assert hub.sleep_sensor_available("TESTBED", "left")
+    hub._connection(False)
+    hub._connection(True)
+    hub._message("orion/TESTBED/out", json.dumps(status).encode())
+    assert not hub.sleep_sensor_available("TESTBED", "left")
+    status["sensors"]["sensor1"][11] += 1
+    hub._message("orion/TESTBED/out", json.dumps(status).encode())
+    assert hub.sleep_sensor_available("TESTBED", "left")
+    status["sensors"]["sensor1"][11] = None
+    hub._message("orion/TESTBED/out", json.dumps(status).encode())
+    assert hub.sleep_sensor_freshness("TESTBED", "left") == "missing_data"
+    assert not hub.sleep_sensor_available("TESTBED", "left")
+    status["sensors"]["sensor1"][11] = 10
+    hub._message("orion/TESTBED/out", json.dumps(status).encode())
+    assert not hub.sleep_sensor_available("TESTBED", "left")
+    status["sensors"]["sensor1"][11] = 11
+    hub._message("orion/TESTBED/out", json.dumps(status).encode())
+    assert hub.sleep_sensor_available("TESTBED", "left")
+
+
+async def test_initial_frozen_clock_eventually_reports_stale(hub, status):
+    now = 100.0
+    with patch("custom_components.orion_local.hub.time", SimpleNamespace(monotonic=lambda: now)):
+        hub._connection(False)
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        now += 30
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        assert hub.sleep_sensor_freshness("TESTBED", "left") == "stale"
+        assert not hub.sleep_sensor_available("TESTBED", "left")

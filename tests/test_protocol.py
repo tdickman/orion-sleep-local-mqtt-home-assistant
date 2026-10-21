@@ -109,9 +109,12 @@ def test_reject_commands(command):
     [
         (5, False),
         (0, True),
+        (1, None),
         (4, True),
         (6, True),
-        (255, True),
+        (7, True),
+        (8, None),
+        (255, None),
         (None, None),
         (True, None),
         ("5", None),
@@ -238,3 +241,46 @@ def test_vital_metrics_validate_independently(status):
     _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
     assert data["left_heart_rate"] is None
     assert data["left_breathing_rate"] == 14
+
+
+@pytest.mark.parametrize(
+    "code,label,occupied,heart,breathing",
+    [
+        (0, "normal", True, 60, 14),
+        (1, "initializing", None, None, None),
+        (2, "breathing_pause_reported", True, 60, None),
+        (3, "heart_signal_loss", True, None, 14),
+        (4, "body_movement", True, 60, 14),
+        (5, "not_occupied", False, None, None),
+        (6, "turned_over", True, 60, 14),
+        (7, "temporary_movement", True, 60, 14),
+        (255, "invalid", None, None, None),
+        (8, "unknown_status", None, None, None),
+        (None, None, None, None, None),
+    ],
+)
+def test_sleep_status_decoding_and_quality(status, code, label, occupied, heart, breathing):
+    status["sensors"]["sensor1"][15:18] = [60, 14, code]
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_sleep_status_code"] == code
+    assert data["left_sleep_status"] == label
+    assert data["left_occupancy"] is occupied
+    assert data["left_heart_rate"] == heart
+    assert data["left_breathing_rate"] == breathing
+
+
+@pytest.mark.parametrize(
+    "clock,expected",
+    [
+        ([0, 0, 0, 0], (0, 0, 0, 0)),
+        ([255, 254, 203, 99], (255, 254, 203, 99)),
+        ([256, 0, 0, 0], None),
+        ([True, 0, 0, 0], None),
+        ([None, 0, 0, 0], None),
+        ([1.5, 0, 0, 0], None),
+    ],
+)
+def test_internal_sensor_clock_validation(status, clock, expected):
+    status["sensors"]["sensor1"][11:15] = clock
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_sensor_time"] == expected

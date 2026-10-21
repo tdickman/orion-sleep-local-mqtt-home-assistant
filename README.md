@@ -208,6 +208,7 @@ For manual installation, copy `custom_components/orion_local` to `/config/custom
 | Left / Right presence binary sensors | Enabled by default; community-documented Sleepace presence mapping |
 | Left / Right heart rate sensors | Local Sleepace readings in BPM; observational mapping |
 | Left / Right breathing rate sensors | Local Sleepace readings in breaths/min; observational mapping |
+| Left / Right sleep sensor status | Diagnostic status and per-side freshness, including initializing, movement, signal loss, and stale data |
 
 **Every outgoing temperature is limited to 10–45°C (50–113°F)**, including service calls, matching the setpoint range reported for the Orion mobile app. HA may display converted Fahrenheit values if configured that way; MQTT commands and the custom action below always use Celsius.
 
@@ -282,12 +283,12 @@ Version **0.1.4** removes the duplicate LED dimmer number entity automatically o
 
 ### Left and right presence
 
-Each bed exposes **Left presence** and **Right presence** binary sensors, enabled by default. They use Home Assistant's occupancy device class (`on` means detected; `off` means clear) and the [Reddit author's mapping](https://www.reddit.com/r/Orion_Sleep/comments/1va4pe0/home_assistant_integration_for_orion_now_feature/p1kxqeu/):
+Each bed exposes **Left presence** and **Right presence** binary sensors, enabled by default. They use Home Assistant's occupancy device class (`on` means detected; `off` means clear) and the [Reddit author's mapping](https://www.reddit.com/r/Orion_Sleep/comments/1va4pe0/home_assistant_integration_for_orion_now_feature/p1kxqeu/), refined by the author's [status-code documentation](https://www.reddit.com/r/Orion_Sleep/comments/1va4pe0/home_assistant_integration_for_orion_now_feature/phz4axj/):
 
-- Left: `sensors.sensor1[17] != 5`.
-- Right: `sensors.sensor2[17] != 5`.
-- Indexes are zero-based: index 17 is the **18th array value**. A value of `5` means not present; other valid byte values mean present according to that mapping.
-- Missing/short arrays or invalid status values produce **unknown**, rather than a false absence. Loss of fresh bed telemetry makes the entities **unavailable**.
+- Left uses `sensors.sensor1[17]`; right uses `sensors.sensor2[17]`.
+- Indexes are zero-based: index 17 is the **18th array value**. A value of `5` means not present; known occupied states `0`, `2`, `3`, `4`, `6`, and `7` mean present.
+- Starting in **0.1.8**, `1` (initializing), `255` (invalid), missing status, and unrecognized status codes produce **unknown**, rather than a false presence or absence.
+- Missing/invalid sensor timestamps, frozen sensor data, or loss of fresh bed telemetry make the entities **unavailable**. See the per-side freshness rules below.
 
 Version **0.1.3** automatically enables presence entities previously disabled by the integration's experimental default. Existing unique IDs and entity IDs are preserved; manually disabled entities remain disabled. If necessary, find them under **Settings → Devices & services → Orion Sleep Local MQTT → your bed → Entities** and enable them. Older entity IDs may still contain `occupancy_experimental`.
 
@@ -301,9 +302,39 @@ Version **0.1.7** adds four enabled-by-default local sensors: **Left heart rate*
 - **Index 16:** breathing rate in breaths/min. Observed values were consistent with resting breathing, but were not independently measured against a respiratory reference.
 - **Index 17:** presence/status, as described above.
 
-These are **observational mappings**, not a manufacturer-verified frame specification. The earlier hypothesis that index 16 was heart rate was rejected by the occupied capture. Readings of `0` or `255`, malformed/missing values, or a side reporting no presence become **unknown** rather than zero. Both vitals require a valid presence reading; stale telemetry makes them **unavailable**. Readings are not smoothed or combined across sides.
+The mappings are supported by our occupied-bed observations and the Reddit author's firmware/SDK-derived documentation, but are not a manufacturer-verified frame specification. The earlier hypothesis that index 16 was heart rate was rejected by the occupied capture. Readings of `0` or `255`, malformed/missing values, or a side reporting no presence become **unknown** rather than zero. Both vitals require a valid, occupied status; initializing, invalid, or unrecognized status also makes them unknown. Starting in **0.1.8**, a heart-signal-loss status suppresses heart rate, and a reported breathing-pause status suppresses breathing rate. Readings are not smoothed or combined across sides.
 
 **One person can be picked up by both sensors**, as observed during testing. Left/right identifies the sensor location, not a guaranteed separate person's pulse. Movement may affect readings; these are not medical measurements. Heart rate, breathing rate, occupancy, and raw sensor arrays are omitted from integration diagnostics. See [the sensor investigation notes](docs/sensor-investigation.md) for evidence and remaining validation limits.
+
+### Sleep sensor freshness and status diagnostics
+
+The bed can keep publishing MQTT status messages even if an individual Sleepace sensor has stopped updating. Starting in **0.1.8**, the integration independently tracks each sensor's internal time bytes at indexes **11–14**. They were observed changing approximately once per second on firmware 2.6.2.
+
+- On discovery, restart, or broker reconnect, the first clock value is a baseline; sleep readings remain unavailable until that sensor's clock changes, normally about a second later.
+- If the clock then stops changing for **30 seconds**, only that side's presence, heart rate, and breathing rate become unavailable. Continuing bed MQTT messages do not refresh the sleep-sensor timer.
+- Any valid clock change restores freshness, including changes caused by a sensor reset or counter wrap. The internal value is not interpreted as wall-clock time.
+- Missing/malformed time bytes invalidate freshness immediately. A valid baseline followed by a clock change is required to recover.
+- Temperature controls, lights, and the other side's sleep readings remain independent. Missing bed telemetry still makes the whole bed unavailable after 30 seconds.
+
+Each side has a diagnostic **Sleep sensor status** entity. While the bed is online it reports:
+
+| State | Meaning |
+| --- | --- |
+| `normal` | Firmware status `0`: normal/in bed |
+| `initializing` | `1`: initializing or reacquiring the signal |
+| `breathing_pause_reported` | `2`: device-reported breathing-pause event; breathing rate is unknown |
+| `heart_signal_loss` | `3`: device-reported heart-signal stop/loss; heart rate is unknown |
+| `body_movement` | `4`: body movement |
+| `not_occupied` | `5`: left bed/not occupied |
+| `turned_over` | `6`: turned over |
+| `temporary_movement` | `7`: temporary movement |
+| `invalid` | `255`: invalid/uninitialized |
+| `unknown_status` | A valid byte with an undocumented status code |
+| `waiting_for_update` | Clock baseline received; waiting for evidence of sensor activity |
+| `missing_data` | No valid internal sensor clock is available |
+| `stale` | No clock change for 30 seconds, even if bed MQTT telemetry continues |
+
+The diagnostic includes a `status_code` attribute with the latest reported raw code (or null if missing). Freshness states take precedence over the reported status label. A malformed status with a live clock appears as unknown. These labels describe firmware observations, **not diagnoses of apnea or a cardiac event**. Downloadable diagnostics continue to exclude sleep status, sensor clocks, and biometric readings.
 
 ### LED telemetry and reboot
 
@@ -316,6 +347,7 @@ These are **observational mappings**, not a manufacturer-verified frame specific
 - Wildcard subscription `orion/+/out`, reconnect with backoff, and resubscribe after reconnect.
 - Stable serial-based device and entity IDs. Known serials survive restarts; offline beds remain visible as unavailable.
 - Mark unavailable after 30 seconds without fresh telemetry or on broker disconnect. Retained messages do not establish availability.
+- Independently detect frozen sleep sensors from their internal timestamps; live bed messages cannot keep stale presence or biometric readings available.
 - Parse/size/type checks and serial/topic matching. Missing individual readings become unknown.
 - Commands use plain UTF-8 on `orion/<serial>/in`, QoS 1, **retain=false**.
 - Entity updates are coalesced to about once per second.

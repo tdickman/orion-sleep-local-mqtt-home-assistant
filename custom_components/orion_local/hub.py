@@ -14,6 +14,7 @@ from .const import (
     COMMAND_CONFIRM_TIMEOUT,
     DOMAIN,
     REBOOT_CONFIRM_TIMEOUT,
+    SLEEP_SENSOR_STALE_SECONDS,
     STALE_SECONDS,
     START_CONFIRM_TIMEOUT,
     signal,
@@ -28,12 +29,16 @@ class OrionHub:
         self.entry = entry
         self.devices = {}
         self.seen = {}
+        self.sensor_times = {}
+        self.sensor_changed = {}
+        self.sensor_confirmed = set()
         self.locks = {}
         self.start_requested = {}
         self.pending = {}
         self._stopped = False
         self.dirty = False
         self._available = set()
+        self._sensor_freshness = {}
         self._cancel_timer = None
         self.store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
         self.mqtt = OrionMQTT(
@@ -63,10 +68,26 @@ class OrionHub:
             and time.monotonic() - self.seen.get(serial, float("-inf")) < STALE_SECONDS
         )
 
+    def sleep_sensor_freshness(self, serial, side):
+        key = (serial, side)
+        if key not in self.sensor_times:
+            return "missing_data"
+        if time.monotonic() - self.sensor_changed[key] >= SLEEP_SENSOR_STALE_SECONDS:
+            return "stale"
+        if key not in self.sensor_confirmed:
+            return "waiting_for_update"
+        return "fresh"
+
+    def sleep_sensor_available(self, serial, side):
+        return self.available(serial) and self.sleep_sensor_freshness(serial, side) == "fresh"
+
     @callback
     def _connection(self, connected):
         if not connected:
             self.seen.clear()
+            self.sensor_times.clear()
+            self.sensor_changed.clear()
+            self.sensor_confirmed.clear()
             self._fail_pending("MQTT disconnected before command confirmation; outcome unknown")
         self.dirty = True
         async_dispatcher_send(self.hass, signal(self.entry.entry_id))
@@ -82,6 +103,22 @@ class OrionHub:
         if data.get("system_state") == "SYSTEM_ON":
             self.start_requested.pop(serial, None)
         self.seen[serial] = time.monotonic()
+        for side in ("left", "right"):
+            key = (serial, side)
+            sensor_time = data.get(f"{side}_sensor_time")
+            if sensor_time is None:
+                self.sensor_times.pop(key, None)
+                self.sensor_changed.pop(key, None)
+                self.sensor_confirmed.discard(key)
+            elif key not in self.sensor_times:
+                # A single frame may already be frozen. Require a clock change
+                # after discovery/reconnect before exposing sleep measurements.
+                self.sensor_times[key] = sensor_time
+                self.sensor_changed[key] = self.seen[serial]
+            elif sensor_time != self.sensor_times[key]:
+                self.sensor_times[key] = sensor_time
+                self.sensor_changed[key] = self.seen[serial]
+                self.sensor_confirmed.add(key)
         if pending := self.pending.get(serial):
             command, before, future = pending
             if not future.done() and command_confirmed(command, data, before):
@@ -94,9 +131,15 @@ class OrionHub:
     @callback
     def _tick(self, now):
         available = {s for s in self.devices if self.available(s)}
-        if self.dirty or available != self._available:
+        freshness = {
+            (serial, side): self.sleep_sensor_freshness(serial, side)
+            for serial in self.devices
+            for side in ("left", "right")
+        }
+        if self.dirty or available != self._available or freshness != self._sensor_freshness:
             self.dirty = False
             self._available = available
+            self._sensor_freshness = freshness
             async_dispatcher_send(self.hass, signal(self.entry.entry_id))
 
     @callback

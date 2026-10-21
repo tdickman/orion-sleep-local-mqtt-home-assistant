@@ -48,12 +48,21 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         publish.side_effect = confirm_publish
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         await hass.async_block_till_done()
+        left_status = "sensor.orion_testbed_left_sleep_sensor_status"
+        right_status = "sensor.orion_testbed_right_sleep_sensor_status"
+        assert hass.states.get(left_status).state == "waiting_for_update"
+        # Each sensor must demonstrate clock activity before presence/vitals load.
+        status["sensors"]["sensor1"][11] += 1
+        status["sensors"]["sensor2"][11] += 1
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        hub._tick(None)
+        await hass.async_block_till_done()
         assert hass.states.get("climate.orion_testbed_left").attributes["temperature"] == 19
         assert hass.states.get("climate.orion_testbed_left").attributes["min_temp"] == 10
         assert hass.states.get("climate.orion_testbed_left").attributes["max_temp"] == 45
         registry = er.async_get(hass)
         entries = er.async_entries_for_config_entry(registry, entry.entry_id)
-        assert len(entries) == 23
+        assert len(entries) == 25
         assert len([e for e in entries if e.disabled_by]) == 1
         left_presence = registry.async_get_entity_id(
             "binary_sensor", DOMAIN, "TESTBED_left_occupancy"
@@ -64,6 +73,10 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         assert hass.states.get(left_presence).state == "off"
         assert hass.states.get(right_presence).state == "off"
         assert hass.states.get(left_presence).attributes["device_class"] == "occupancy"
+        assert hass.states.get(left_status).state == "not_occupied"
+        assert hass.states.get(left_status).attributes["device_class"] == "enum"
+        assert hass.states.get(left_status).attributes["status_code"] == 5
+        assert registry.async_get(left_status).entity_category.value == "diagnostic"
         status["sensors"]["sensor1"][17] = 0
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         hub._tick(None)
@@ -75,15 +88,19 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         hub._tick(None)
         await hass.async_block_till_done()
-        assert hass.states.get(left_presence).state == "unknown"
+        assert hass.states.get(left_presence).state == "unavailable"
+        assert hass.states.get(left_status).state == "missing_data"
         assert hass.states.get(right_presence).state == "on"
         left_hr = "sensor.orion_testbed_left_heart_rate"
         right_hr = "sensor.orion_testbed_right_heart_rate"
         left_br = "sensor.orion_testbed_left_breathing_rate"
         right_br = "sensor.orion_testbed_right_breathing_rate"
-        assert hass.states.get(left_hr).state == "unknown"
+        assert hass.states.get(left_hr).state == "unavailable"
         status["sensors"]["sensor1"] = [0] * 15 + [60, 14, 0]
         status["sensors"]["sensor2"] = [0] * 15 + [66, 16, 4]
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        status["sensors"]["sensor1"][11] = 1
+        status["sensors"]["sensor2"][11] = 1
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         hub._tick(None)
         await hass.async_block_till_done()
@@ -105,6 +122,27 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         assert hass.states.get(left_hr).state == "unknown"
         assert hass.states.get(left_br).state == "unknown"
         assert float(hass.states.get(right_hr).state) == 66
+        # A frozen left sleep sensor must not disable right or climate controls.
+        hub.sensor_changed[("TESTBED", "left")] -= 31
+        hub._tick(None)
+        await hass.async_block_till_done()
+        assert hass.states.get(left_hr).state == "unavailable"
+        assert hass.states.get(left_br).state == "unavailable"
+        assert hass.states.get(left_presence).state == "unavailable"
+        assert hass.states.get(left_status).state == "stale"
+        assert hass.states.get(right_status).state == "body_movement"
+        assert float(hass.states.get(right_hr).state) == 66
+        assert hass.states.get("climate.orion_testbed_left").state != "unavailable"
+        for code, label in ((1, "initializing"), (255, "invalid")):
+            status["sensors"]["sensor1"][11] += 1
+            status["sensors"]["sensor1"][17] = code
+            hub._message("orion/TESTBED/out", json.dumps(status).encode())
+            hub._tick(None)
+            await hass.async_block_till_done()
+            assert hass.states.get(left_status).state == label
+            assert hass.states.get(left_presence).state == "unknown"
+            assert hass.states.get(left_hr).state == "unknown"
+            assert hass.states.get(left_br).state == "unknown"
         device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "TESTBED")})
         await hass.services.async_call(
             DOMAIN,
@@ -179,6 +217,6 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         hub._message("orion/SECOND/out", json.dumps(status).encode())
         await hass.async_block_till_done()
         assert hass.states.get("climate.orion_second_left") is not None
-        assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 46
+        assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 50
         assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_stop()

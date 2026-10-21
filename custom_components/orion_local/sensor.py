@@ -3,6 +3,7 @@
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
 
+from .const import SLEEP_STATUS_OPTIONS
 from .entity import OrionEntity, setup_entities
 
 SENSORS = [
@@ -28,6 +29,8 @@ SENSORS = [
     ("right_heart_rate", "Right heart rate", None, "bpm"),
     ("left_breathing_rate", "Left breathing rate", None, "breaths/min"),
     ("right_breathing_rate", "Right breathing rate", None, "breaths/min"),
+    ("left_sleep_status", "Left sleep sensor status", SensorDeviceClass.ENUM, None),
+    ("right_sleep_status", "Right sleep sensor status", SensorDeviceClass.ENUM, None),
 ]
 
 
@@ -45,6 +48,8 @@ class OrionSensor(OrionEntity, SensorEntity):
         super().__init__(hub, serial, key, name)
         self._attr_device_class = device_class
         self._attr_native_unit_of_measurement = unit
+        if key.endswith("_sleep_status"):
+            self._attr_options = SLEEP_STATUS_OPTIONS
         if unit:
             self._attr_state_class = SensorStateClass.MEASUREMENT
         if key.endswith("_heart_rate"):
@@ -56,5 +61,15 @@ class OrionSensor(OrionEntity, SensorEntity):
 
     @property
     def native_value(self):
+        if self.key.endswith("_sleep_status"):
+            freshness = self.hub.sleep_sensor_freshness(self.serial, self.key.split("_", 1)[0])
+            if freshness != "fresh":
+                return freshness
         value = self.data.get(self.key)
         return value / 1000 if self.key == "uptime" and value is not None else value
+
+    @property
+    def extra_state_attributes(self):
+        if self.key.endswith("_sleep_status"):
+            return {"status_code": self.data.get(f"{self.key}_code")}
+        return None

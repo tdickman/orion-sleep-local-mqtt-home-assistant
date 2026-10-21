@@ -39,6 +39,8 @@ class OrionEntity(Entity):
 
     @property
     def available(self):
+        if self.key.endswith(("_occupancy", "_heart_rate", "_breathing_rate")):
+            return self.hub.sleep_sensor_available(self.serial, self.key.split("_", 1)[0])
         return self.hub.available(self.serial)
 
     @property
