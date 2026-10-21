@@ -194,7 +194,6 @@ For manual installation, copy `custom_components/orion_local` to `/config/custom
 | Left / Right climate | Temperature, target, enable/disable; automatic heating/cooling (`heat_cool`) |
 | Quiet mode switch | `FAN QUIET ON` / `OFF` |
 | LED light | RGB color and brightness |
-| LED dimmer number | Separate 0–100% slider; 0 turns the LEDs off without changing the selected color |
 | Start system button | Starts the system if off; does not alter side setpoints or enable flags |
 | Turn off both sides button | `CLEAR BOTH` |
 | Reboot button | Disabled by default; enable in the entity settings if needed |
@@ -228,7 +227,7 @@ This uses a single `SET BOTH <left> <right>` command and starts the system if of
 
 ### RGB LED color and dimmer
 
-Each bed has an **LED light** entity with a color picker and brightness control, plus a separate **LED dimmer** slider with exact integer percentages from **0 to 100%**. Open the LED light's more-info dialog to select RGB color, or add the light and dimmer entities to your dashboard. Both controls reflect the same device telemetry, so changes made through either control appear in the other once the bed reports them.
+Each bed has one **LED light** entity with both a color picker and brightness control. Open the LED light's more-info dialog to select RGB color and adjust brightness, or add the light entity to your dashboard.
 
 Set color and brightness together with Home Assistant's standard light action (replace the example entity ID with your bed's entity):
 
@@ -241,19 +240,21 @@ data:
   brightness_pct: 10
 ```
 
-To adjust just the dimmer, preserving the color:
+To adjust just the brightness, preserving the color:
 
 ```yaml
-action: number.set_value
+action: light.turn_on
 target:
-  entity_id: number.orion_YOUR_SERIAL_led_dimmer
+  entity_id: light.orion_YOUR_SERIAL_led
 data:
-  value: 25
+  brightness_pct: 25
 ```
 
-Set the dimmer to `0`, or call `light.turn_off`, to turn the LEDs off. Setting the dimmer above zero uses the existing color; if that color is black (`[0, 0, 0]`), choose a non-black color to produce visible light. `light.turn_on` without brightness uses the current nonzero brightness or 100% if the light was off.
+Set brightness to `0`, or call `light.turn_off`, to turn the LEDs off. Setting brightness above zero uses the existing color; if that color is black (`[0, 0, 0]`), choose a non-black color to produce visible light. `light.turn_on` without brightness uses the current nonzero brightness or 100% if the light was off.
 
-RGB components are **0–255** and use `IB RGB <R> <G> <B>`. The dimmer uses `IB DIMMER <0-100>`. The light entity converts HA's 0–255 brightness scale to the bed's integer percentage scale; the number entity writes percentages directly. State comes from fresh telemetry rather than assuming the command succeeded.
+RGB components are **0–255** and use `IB RGB <R> <G> <B>`. Brightness uses `IB DIMMER <0-100>`. The light entity converts HA's 0–255 brightness scale to the bed's integer percentage scale. State comes from fresh telemetry rather than assuming the command succeeded.
+
+Version **0.1.4** removes the duplicate LED dimmer number entity automatically on upgrade. The LED light keeps its existing entity ID. Update any dashboards or automations that referenced the old number entity to use the light's brightness control instead.
 
 ### Left and right presence
 

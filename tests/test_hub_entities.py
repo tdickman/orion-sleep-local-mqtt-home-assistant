@@ -13,7 +13,6 @@ from custom_components.orion_local.diagnostics import async_get_config_entry_dia
 from custom_components.orion_local.entity import setup_entities
 from custom_components.orion_local.hub import OrionHub
 from custom_components.orion_local.light import OrionLight
-from custom_components.orion_local.number import OrionDimmer
 
 
 @pytest.fixture
@@ -85,22 +84,6 @@ async def test_light_scaling(hub):
     ]
     await light.async_turn_off()
     assert hub.mqtt.publish.await_args.args[1] == "IB DIMMER 0"
-
-
-async def test_dimmer_bounds_and_telemetry(hub):
-    dimmer = OrionDimmer(hub, "TESTBED", "led_dimmer", "LED dimmer")
-    assert dimmer.native_value == 10
-    for value in (0, 37.0, 100):
-        await dimmer.async_set_native_value(value)
-        assert hub.mqtt.publish.await_args.args == ("TESTBED", f"IB DIMMER {int(value)}")
-    assert dimmer.native_value == 10
-    hub.mqtt.publish.reset_mock()
-    for value in (-1, 101, 1.5, float("nan"), float("inf"), None, True):
-        with pytest.raises(HomeAssistantError):
-            await dimmer.async_set_native_value(value)
-    hub.mqtt.publish.assert_not_called()
-    hub.devices["TESTBED"]["brightness"] = None
-    assert dimmer.native_value is None
 
 
 async def test_dynamic_discovery_deduplicates(hub):

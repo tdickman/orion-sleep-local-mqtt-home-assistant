@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, MAX_TEMP, MIN_TEMP, PLATFORMS
 from .hub import OrionHub
@@ -21,6 +22,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except (OSError, TimeoutError, ConnectionError) as err:
         raise ConfigEntryNotReady("Cannot connect to Orion MQTT broker") from err
     entry.runtime_data = hub
+
+    # Brightness belongs to the RGB light. Remove the redundant number entity
+    # from earlier releases, including entities renamed by the user.
+    registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (
+            entity.domain == "number"
+            and entity.platform == DOMAIN
+            and entity.unique_id.endswith("_led_dimmer")
+        ):
+            registry.async_remove(entity.entity_id)
 
     async def stop_on_shutdown(event):
         await hub.stop()

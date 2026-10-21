@@ -48,7 +48,7 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         assert hass.states.get("climate.orion_testbed_left").attributes["max_temp"] == 45
         registry = er.async_get(hass)
         entries = er.async_entries_for_config_entry(registry, entry.entry_id)
-        assert len(entries) == 20
+        assert len(entries) == 19
         assert len([e for e in entries if e.disabled_by]) == 1
         left_presence = registry.async_get_entity_id(
             "binary_sensor", DOMAIN, "TESTBED_left_occupancy"
@@ -82,9 +82,8 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         publish.assert_awaited_once_with("TESTBED", "SET BOTH 10 45")
         publish.reset_mock()
         light_id = "light.orion_testbed_led"
-        dimmer_id = "number.orion_testbed_led_dimmer"
         assert hass.states.get(light_id).attributes["supported_color_modes"] == ["rgb"]
-        assert float(hass.states.get(dimmer_id).state) == 10
+        assert registry.async_get_entity_id("number", DOMAIN, "TESTBED_led_dimmer") is None
         await hass.services.async_call(
             "light",
             "turn_on",
@@ -97,16 +96,15 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         ]
         publish.reset_mock()
         await hass.services.async_call(
-            "number", "set_value", {"entity_id": dimmer_id, "value": 73}, blocking=True
+            "light", "turn_on", {"entity_id": light_id, "brightness_pct": 73}, blocking=True
         )
         publish.assert_awaited_once_with("TESTBED", "IB DIMMER 73")
-        # Both controls remain telemetry-driven, then synchronize together.
-        assert float(hass.states.get(dimmer_id).state) == 10
+        # Brightness remains telemetry-driven instead of optimistic.
+        assert hass.states.get(light_id).attributes["brightness"] == 26
         status["led"].update(led_brightness=73, idle_r=255, idle_g=64, idle_b=32)
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         hub._tick(None)
         await hass.async_block_till_done()
-        assert float(hass.states.get(dimmer_id).state) == 73
         assert hass.states.get(light_id).attributes["brightness"] == 186
         assert hass.states.get(light_id).attributes["rgb_color"] == (255, 64, 32)
         publish.reset_mock()
@@ -123,6 +121,14 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
             left_presence, disabled_by=er.RegistryEntryDisabler.INTEGRATION
         )
         registry.async_update_entity(right_presence, disabled_by=er.RegistryEntryDisabler.USER)
+        # Simulate a renamed dimmer entity left behind by version 0.1.3.
+        old_dimmer = registry.async_get_or_create(
+            "number",
+            DOMAIN,
+            "TESTBED_led_dimmer",
+            config_entry=entry,
+            suggested_object_id="custom_bed_brightness",
+        )
         # Persisted identities return unavailable until fresh telemetry arrives.
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -133,10 +139,12 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         assert registry.async_get(left_presence).disabled_by is None
         assert registry.async_get(right_presence).disabled_by is er.RegistryEntryDisabler.USER
         assert hass.states.get(left_presence).state == "unavailable"
+        assert registry.async_get(old_dimmer.entity_id) is None
+        assert registry.async_get_entity_id("light", DOMAIN, "TESTBED_led") == light_id
         status["serial"] = "SECOND"
         hub._message("orion/SECOND/out", json.dumps(status).encode())
         await hass.async_block_till_done()
         assert hass.states.get("climate.orion_second_left") is not None
-        assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 40
+        assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 38
         assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_stop()
