@@ -65,7 +65,12 @@ def command_confirmed(command: str, data: dict, before: dict) -> bool:
         if len(sides) == 2 and len(targets) == 1:
             targets *= 2
         return all(
-            data.get(f"{side}_target") == target and data.get(f"{side}_enabled") is True
+            (reported := number(data.get(f"{side}_target"))) is not None
+            # Firmware reports setpoints to two decimal places. Fahrenheit
+            # conversions can request e.g. 21.3889 but report 21.39. Allow half
+            # the reporting resolution, plus epsilon for floating-point ties.
+            and math.isclose(reported, target, rel_tol=0, abs_tol=0.005 + 1e-9)
+            and data.get(f"{side}_enabled") is True
             for side, target in zip(sides, targets, strict=True)
         )
     if parts[0] == "CLEAR":

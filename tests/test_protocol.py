@@ -167,3 +167,39 @@ def test_command_confirmation(command, matching, not_matching):
     assert command_confirmed(command, matching, before)
     assert not command_confirmed(command, matching | not_matching, before)
     assert not command_confirmed(command, {}, before)
+
+
+@pytest.mark.parametrize(
+    "reported,enabled,expected",
+    [
+        (21.39, True, True),
+        (21.38, True, False),
+        (21.40, True, False),
+        (21.39, False, False),
+        (None, True, False),
+        (True, True, False),
+    ],
+)
+def test_fahrenheit_conversion_confirmation(status, reported, enabled, expected):
+    # Actual live observation: SET RIGHT 21.3889 -> setpoint 21.39.
+    status["tec"]["right"].update(setpoint=reported, control_enabled=enabled)
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert command_confirmed("SET RIGHT 21.3889", data, {}) is expected
+
+
+@pytest.mark.parametrize("reported,expected", [(21.38, True), (21.39, True), (21.391, False)])
+def test_confirmation_rounding_halfway_boundary(reported, expected):
+    data = {"left_target": reported, "left_enabled": True}
+    assert command_confirmed("SET LEFT 21.385", data, {}) is expected
+
+
+def test_both_converted_setpoints_confirm_independently():
+    data = {
+        "left_target": 21.39,
+        "right_target": 21.11,
+        "left_enabled": True,
+        "right_enabled": True,
+    }
+    assert command_confirmed("SET BOTH 21.3889 21.1111", data, {})
+    data["right_target"] = 21.12
+    assert not command_confirmed("SET BOTH 21.3889 21.1111", data, {})

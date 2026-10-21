@@ -286,3 +286,13 @@ async def test_reboot_requires_known_uptime_before_sending(hub):
     with pytest.raises(HomeAssistantError, match="uptime"):
         await hub.commands("TESTBED", ["REBOOT"])
     hub.mqtt.publish.assert_not_called()
+
+
+async def test_rounded_live_setpoint_confirms_without_timeout(hub, status):
+    task = asyncio.create_task(hub.commands("TESTBED", ["SET RIGHT 21.3889"]))
+    await wait_for_publishes(hub, 1)
+    status["tec"]["right"].update(setpoint=21.39, control_enabled=True)
+    hub._message("orion/TESTBED/out", json.dumps(status).encode())
+    await asyncio.wait_for(task, 1)
+    assert not hub.pending
+    hub.mqtt.publish.assert_awaited_once_with("TESTBED", "SET RIGHT 21.3889")

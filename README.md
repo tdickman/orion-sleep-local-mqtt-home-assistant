@@ -49,7 +49,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    restart: unless-stopped
+    restart: always
     pids_limit: 64
     mem_limit: 128m
     volumes:
@@ -227,7 +227,7 @@ Starting in **0.1.5**, commands to each bed are serialized **until fresh telemet
 | Start system | System reaches `SYSTEM_ON`; `PENDING_ON` is not sufficient | 240 seconds |
 | Reboot | Uptime decreases and reported safety/fault status is healthy | 120 seconds |
 
-Temperature confirmation means the bed **accepted the target**, not that the water has physically reached that temperature. For a both-sides command, both targets must match in the same status frame. Previously cached state, retained MQTT messages, and a command echo do not count as confirmation.
+Temperature confirmation means the bed **accepted the target**, not that the water has physically reached that temperature. Firmware reports setpoints to two decimal places, so confirmation allows a rounding difference of up to **0.005°C** (plus floating-point epsilon). For example, a Fahrenheit-converted command of `21.3889°C` is confirmed by telemetry reporting `21.39°C`. For a both-sides command, both targets must match in the same status frame. Previously cached state, retained MQTT messages, and a command echo do not count as confirmation.
 
 A temperature action that starts an off bed waits for the target confirmation and then system startup, so its completion can take about a minute. The lock covers the whole action, including startup and multi-command LED changes. Commands queued behind another action wait for it to finish; their own confirmation timeout starts after their command is published and acknowledged. The broker acknowledgement itself has a separate five-second timeout.
 
