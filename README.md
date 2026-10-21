@@ -45,9 +45,9 @@ For manual installation, copy `custom_components/orion_local` to `/config/custom
 | Fault / Safety problem binary sensors | Reported firmware fault / safety status |
 | Left / Right occupancy binary sensors | Experimental and disabled by default |
 
-**Every outgoing temperature is limited to 17–24°C**, including service calls. HA may display converted Fahrenheit values if configured that way; MQTT commands and the custom action below always use Celsius. This is the requested operating range, not a claim about the hardware's full supported range.
+**Every outgoing temperature is limited to 10–45°C (50–113°F)**, including service calls, matching the setpoint range reported for the Orion mobile app. HA may display converted Fahrenheit values if configured that way; MQTT commands and the custom action below always use Celsius.
 
-Setting a climate target enables that side and requests `SYSTEM ON` if the bed is off. The firmware chooses heating or cooling; undocumented TEC mode numbers are not translated into an HVAC action. Turning off one climate sends `CLEAR LEFT` or `CLEAR RIGHT`; the other side is left alone. Turning on a climate reuses its reported target; if that target is outside 17–24°C, set a valid temperature first.
+Setting a climate target enables that side and requests `SYSTEM ON` if the bed is off. The firmware chooses heating or cooling; undocumented TEC mode numbers are not translated into an HVAC action. Turning off one climate sends `CLEAR LEFT` or `CLEAR RIGHT`; the other side is left alone. Turning on a climate reuses its reported target; if that target is outside 10–45°C, set a valid temperature first.
 
 Startup can take about a minute. While `PENDING_ON`, wait instead of repeatedly starting the bed. Entity state comes from telemetry, never merely from a broker acknowledgement. The integration does not retry application commands on a timeout; MQTT QoS 1 itself can redeliver an in-flight message.
 
@@ -69,7 +69,7 @@ This uses a single `SET BOTH <left> <right>` command and starts the system if of
 
 - LED RGB uses `led.idle_r/g/b`, the requested color. Firmware `led.r/g/b` are brightness-scaled output values. Brightness maps between HA's 0–255 and Orion's 0–100.
 - Occupancy uses the Reddit author's mapping (`sensor1[17] != 5` for left and `sensor2[17] != 5` for right), with missing/short-array handling. Occupancy transitions and physical side mapping have **not** been validated.
-- **Reboot resets targets to firmware defaults (observed 27.5°C) and disables both sides.** The integration does not automatically power on or restore targets after a user-triggered reboot. Choose valid 17–24°C targets to resume.
+- **Reboot resets targets to firmware defaults (observed 27.5°C) and disables both sides.** The integration does not automatically power on or restore targets after a user-triggered reboot. Choose valid 10–45°C targets to resume.
 - Fill and Wi-Fi erasure are deliberately not exposed or accepted by the command validator. There is no unrestricted raw-command action.
 
 ## Reliability and diagnostics
@@ -105,7 +105,7 @@ uv run python tools/live_check.py \
   --execute --report live-results.json
 ```
 
-This check uses 17–24°C targets, skips fill and Wi-Fi erase, and attempts to restore the captured settings after testing. Run it with the bed initially healthy, `SYSTEM_ON`, and its targets already within that range. Physical LED output and reaching thermal equilibrium require observation beyond telemetry verification.
+This check keeps targets within 10–45°C, skips fill and Wi-Fi erase, and attempts to restore the captured settings after testing. Run it with the bed initially healthy, `SYSTEM_ON`, and its targets already within that range. Physical LED output and reaching thermal equilibrium require observation beyond telemetry verification.
 
 ## Publishing
 

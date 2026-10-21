@@ -59,8 +59,10 @@ def test_missing_and_malformed_optional_fields(status):
 @pytest.mark.parametrize(
     "command",
     [
-        "SET LEFT 17",
-        "SET RIGHT 24",
+        "SET LEFT 10",
+        "SET RIGHT 45",
+        "SET BOTH 10 45",
+        "SET BOTH 27.5",
         "SET BOTH 19",
         "SET BOTH 19.5 20",
         "CLEAR LEFT",
@@ -85,8 +87,8 @@ def test_allowed_commands(command):
         "FILL START",
         "ERASE WIFI",
         "SYSTEM OFF",
-        "SET LEFT 16.9",
-        "SET BOTH 19 24.1",
+        "SET LEFT 9.9",
+        "SET BOTH 19 45.1",
         "SET LEFT 19 20",
         "SET BOTH nan",
         "SET RIGHT inf",

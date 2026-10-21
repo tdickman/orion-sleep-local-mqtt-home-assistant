@@ -57,7 +57,9 @@ class OrionClimate(OrionEntity, ClimateEntity):
         try:
             target = temperature(kwargs[ATTR_TEMPERATURE])
         except (KeyError, ValueError) as err:
-            raise HomeAssistantError("Temperature must be between 17 and 24 °C") from err
+            raise HomeAssistantError(
+                f"Temperature must be between {MIN_TEMP:g} and {MAX_TEMP:g} °C"
+            ) from err
         await self.hub.commands(self.serial, [f"SET {self.side.upper()} {target}"], start=True)
 
     async def async_set_hvac_mode(self, hvac_mode):

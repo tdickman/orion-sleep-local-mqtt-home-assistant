@@ -50,7 +50,7 @@ async def test_climate_bounds_and_no_optimism(hub):
     await climate.async_set_temperature(temperature=21)
     hub.mqtt.publish.assert_awaited_once_with("TESTBED", "SET LEFT 21")
     assert climate.target_temperature == 19  # State only from device.
-    for temp in (16, 25, float("nan"), None):
+    for temp in (9.9, 45.1, float("nan"), None):
         with pytest.raises(HomeAssistantError):
             await climate.async_set_temperature(temperature=temp)
     await climate.async_turn_off()
@@ -69,7 +69,7 @@ async def test_startup_not_repeated_and_explicit_stop_resets(hub):
 
 async def test_validate_whole_batch_before_publish(hub):
     with pytest.raises(HomeAssistantError):
-        await hub.commands("TESTBED", ["SET LEFT 19", "SET RIGHT 25"])
+        await hub.commands("TESTBED", ["SET LEFT 19", "SET RIGHT 46"])
     hub.mqtt.publish.assert_not_called()
 
 

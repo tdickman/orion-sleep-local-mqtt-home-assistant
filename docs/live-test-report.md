@@ -36,7 +36,7 @@ Final restoration was confirmed over three fresh frames:
 - LED brightness **0**, idle RGB **255 / 255 / 255**
 - `safetyOk: "true"`, all error flags zero
 
-The firmware selected 27.5°C during reboot; no test command requested that temperature. Every temperature command actually sent used **19°C or 19.5°C**. Integration and test tooling now reject outgoing temperatures outside **17–24°C**.
+The firmware selected 27.5°C during reboot; no test command requested that temperature. Every temperature command actually sent used **19°C or 19.5°C**. At the time of this test, integration and test tooling limited outgoing temperatures to **17–24°C**. Version 0.1.1 expands those limits to **10–45°C (50–113°F)** to match the user-reported mobile app range; the expanded endpoints were validated in automated tests, not exercised on the bed.
 
 The corrected LED test used the actual integration's `OrionMQTT` transport and `parse_status` parser against the real broker, then restored brightness 0 and idle white, both confirmed over three frames. The transport disconnected cleanly afterward.
 

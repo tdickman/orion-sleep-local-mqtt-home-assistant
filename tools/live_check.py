@@ -89,12 +89,12 @@ def main():
         raise RuntimeError("Begin with the bed healthy and SYSTEM_ON")
     left = initial["tec"]["left"]["setpoint"]
     right = initial["tec"]["right"]["setpoint"]
-    if not all(17 <= value <= 24 for value in (left, right)):
+    if not all(10 <= value <= 45 for value in (left, right)):
         client.disconnect()
         client.loop_stop()
-        raise RuntimeError("Initial targets outside 17–24 °C; set valid targets before testing")
-    test_left = left + 0.5 if left <= 23.5 else left - 0.5
-    test_right = right + 0.5 if right <= 23.5 else right - 0.5
+        raise RuntimeError("Initial targets outside 10–45 °C; set valid targets before testing")
+    test_left = left + 0.5 if left <= 44.5 else left - 0.5
+    test_right = right + 0.5 if right <= 44.5 else right - 0.5
 
     def target(left_value=None, right_value=None):
         return lambda d: all(

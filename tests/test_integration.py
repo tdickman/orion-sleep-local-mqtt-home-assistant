@@ -44,6 +44,8 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         await hass.async_block_till_done()
         assert hass.states.get("climate.orion_testbed_left").attributes["temperature"] == 19
+        assert hass.states.get("climate.orion_testbed_left").attributes["min_temp"] == 10
+        assert hass.states.get("climate.orion_testbed_left").attributes["max_temp"] == 45
         registry = er.async_get(hass)
         entries = er.async_entries_for_config_entry(registry, entry.entry_id)
         assert len(entries) == 19
@@ -52,10 +54,10 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         await hass.services.async_call(
             DOMAIN,
             "set_temperatures",
-            {"device_id": device.id, "left": 20, "right": 21},
+            {"device_id": device.id, "left": 10, "right": 45},
             blocking=True,
         )
-        publish.assert_awaited_once_with("TESTBED", "SET BOTH 20 21")
+        publish.assert_awaited_once_with("TESTBED", "SET BOTH 10 45")
         duplicate = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": "user"}, data={"host": "localhost", "port": 1883}
         )
