@@ -9,9 +9,169 @@ This integration maintains its **own MQTT connection**. Home Assistant's existin
 - Home Assistant **2026.2 or newer** (tested against Core 2026.2.3).
 - HACS, or manual access to Home Assistant's `custom_components` directory.
 - An anonymous MQTT broker reachable by Home Assistant and the bed, normally TCP port `1883`.
-- The bed already redirected to that broker. The community-described setup overrides `dev.orionbed.com` in local DNS to the broker's IP, then restarts the bed. DNS does not change the port. App/cloud/schedule behavior under this setup has not been verified.
+- A local DNS override for `dev.orionbed.com` pointing to the broker. Follow the Docker and router setup below before adding the integration.
 
 Keep the anonymous broker on your LAN. You do not need to change or weaken your existing authenticated Home Assistant MQTT broker.
+
+## 1. Run a restricted MQTT broker in Docker
+
+**Allow Home Assistant and the Orion bed(s), then block everyone else.** Allowing only Home Assistant would prevent the bed from connecting: both HA and the bed are MQTT clients. The bed publishes telemetry to the broker and subscribes there for commands.
+
+This example uses **Docker Engine on a native Linux host**, Docker Compose, and a host firewall managed with **nftables**. It uses host networking so MQTT traffic goes through the host's **INPUT** firewall path. Do not substitute Docker `ports:` publishing and assume these INPUT rules still protect it: Docker bridge forwarding can bypass ordinary host INPUT/UFW rules. Docker Desktop and hosts managed by UFW/firewalld need equivalent rules in their own firewall/network configuration.
+
+### Reserve the addresses
+
+Create DHCP reservations in your router for these devices. Replace the example addresses throughout this guide with your own:
+
+| Device | Example address | Purpose |
+| --- | --- | --- |
+| Docker host / Orion MQTT broker | `192.168.64.5` | Destination for TCP 1883 and the DNS override |
+| Home Assistant | `192.168.64.61` | Allowed MQTT client |
+| Orion bed | `192.168.64.80` | Allowed MQTT client; **example only**, find your bed's actual lease |
+| Router / local DNS resolver | `192.168.64.1` | Answers the bed's DNS requests |
+
+Use the source IP the broker actually sees for Home Assistant. For a separate HA OS machine this is normally its LAN IP; containerized or NATed deployments can differ. Add each additional bed's reserved IP individually. A dedicated IoT VLAN with equivalent network ACLs provides stronger isolation than IP filtering on a shared LAN. This transport is anonymous, unencrypted MQTT; an IP allowlist restricts network access but is not client authentication.
+
+### Create the broker files
+
+Create a directory such as `orion-mqtt` and place these three files in it. Keep the files readable by the container's non-root UID (for example, directory mode `755` and file mode `644`).
+
+**`compose.yaml`**:
+
+```yaml
+services:
+  mqtt:
+    image: eclipse-mosquitto:2
+    network_mode: host
+    user: "1883:1883"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    pids_limit: 64
+    mem_limit: 128m
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./acl:/mosquitto/config/acl:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+**`mosquitto.conf`** — bind only to the Docker host's LAN IPv4 address, not all interfaces:
+
+```conf
+listener 1883 192.168.64.5
+socket_domain ipv4
+allow_anonymous true
+acl_file /mosquitto/config/acl
+persistence false
+log_dest stdout
+connection_messages true
+```
+
+**`acl`** — permit only Orion command and telemetry topics:
+
+```conf
+topic readwrite orion/+/in
+topic readwrite orion/+/out
+```
+
+Both allowed clients share these anonymous topic permissions; the ACL does not distinguish HA from a bed. `persistence false` avoids a writable broker database; fresh telemetry repopulates HA after reconnect. Do not publish retained commands. The configuration exposes no IPv6, WebSocket, or administrative listener, mounts no Docker socket, and requires no privileged container. Keep the Mosquitto image updated with `docker compose pull` followed by `docker compose up -d`.
+
+Port 1883 on the selected host address must be free. If another broker already owns it, use a separate host/IP for Orion; changing the port alone will not work with the DNS override.
+
+### Apply the IP allowlist before starting the container
+
+On the **Docker host**, save the following as `/etc/nftables.d/orion-mqtt.nft` (create that directory if needed). Replace the broker, HA, and bed addresses first:
+
+```nft
+table inet orion_mqtt {
+    chain input {
+        type filter hook input priority -10; policy accept;
+        ip daddr 192.168.64.5 tcp dport 1883 ip saddr != { 192.168.64.61, 192.168.64.80 } counter drop
+    }
+}
+```
+
+This drops connections to this broker's port 1883 from every source except HA and the bed. It leaves unrelated ports alone. Approved sources still need to be allowed by any other existing host or inter-VLAN firewall policy; this rule does not override a separate default-deny firewall.
+
+Check and load the new table:
+
+```bash
+sudo nft --check --file /etc/nftables.d/orion-mqtt.nft
+sudo nft --file /etc/nftables.d/orion-mqtt.nft
+sudo nft list table inet orion_mqtt
+```
+
+**Make the restriction survive reboot before enabling automatic container startup.** On a system using `/etc/nftables.conf`, add this include to its existing ruleset without replacing the other rules:
+
+```nft
+include "/etc/nftables.d/orion-mqtt.nft"
+```
+
+Ensure the include is after any `flush ruleset` statement. Validate the complete file with `sudo nft --check --file /etc/nftables.conf`, and enable the firewall's boot service with `sudo systemctl enable nftables`. Do not flush a running host's entire ruleset to apply this example; it may contain Docker or other application rules.
+
+For a systemd-managed Docker Engine, use `sudo systemctl edit docker.service` to add the following dependency so Docker starts only after the persistent firewall service has started successfully:
+
+```ini
+[Unit]
+Requires=nftables.service
+After=nftables.service
+```
+
+Run `sudo systemctl daemon-reload`. The table loaded above protects the current session; this dependency orders future Docker starts. Confirm the persistent rules and Docker startup after a planned host reboot. If your distribution uses another firewall manager, configure the equivalent persistent allowlist and startup ordering there instead of enabling a competing firewall service. Do not add a WAN port-forward or UPnP mapping for MQTT.
+
+### Start and verify
+
+From the directory containing `compose.yaml`:
+
+```bash
+docker compose config
+docker compose up -d
+docker compose logs --tail=50 mqtt
+```
+
+After completing the DNS step below, verify both sides of the restriction:
+
+- **From the HA host/network context:** TCP 1883 should connect. If Mosquitto client tools are installed, `mosquitto_sub -h 192.168.64.5 -p 1883 -t 'orion/+/out' -C 1 -W 15` should receive a fresh status message once the bed connects. Alternatively, configure this integration in HA and confirm discovery.
+- **From a different, non-allowlisted LAN device:** `nc -vz -w 3 192.168.64.5 1883` should time out. Inspect `sudo nft list table inet orion_mqtt` on the Docker host to see the drop counter increase.
+- **In broker logs:** verify connections from the reserved bed and HA addresses. Connection alone does not prove telemetry is flowing.
+
+The broker host itself is not automatically allowlisted as an MQTT client. Run the positive check from HA, not from a random laptop or the broker host. Host administrators retain control of the firewall and container.
+
+## 2. Override the bed's DNS in your router
+
+The bed normally connects to **`dev.orionbed.com`**. The local override makes that name resolve to your Docker host, directing its MQTT connection to your broker without changing the bed's Wi-Fi configuration.
+
+1. Open your router's administration page and find **Local DNS**, **DNS host overrides**, **DNS records**, or **DNS rewrites**. This must change DNS answers; a DHCP reservation or a device display name alone is not enough.
+2. Add an exact **A record / host override**:
+
+   | Setting | Value |
+   | --- | --- |
+   | Hostname / fully qualified name | `dev.orionbed.com` |
+   | IPv4 address | `192.168.64.5` (your MQTT Docker host) |
+   | Port | None — DNS maps names to addresses, not ports |
+
+   If the UI splits host and domain, use **host `dev`**, **domain `orionbed.com`**. Override only this hostname, not the entire `orionbed.com` domain.
+3. Apply the change and ensure the **bed's network/VLAN receives this resolver through DHCP**. All DNS servers advertised to the bed must honor the override; a public secondary resolver can bypass it. If the router cannot create overrides, use a local resolver such as Pi-hole or AdGuard Home and advertise that resolver through DHCP instead.
+4. Check the answer from a device using the same DNS path as the bed (replace `192.168.64.1` with your local resolver):
+
+   ```bash
+   nslookup dev.orionbed.com 192.168.64.1
+   ```
+
+   The returned **address for `dev.orionbed.com`** should be `192.168.64.5`, not its public address. Also check `nslookup -type=AAAA dev.orionbed.com 192.168.64.1`: there should be no public IPv6 answer that lets the bed bypass the IPv4 override. Configure the local resolver to suppress that hostname's AAAA response if necessary. If DNS-rebinding protection blocks the private answer, add a narrow exception for this exact hostname.
+5. With the broker and firewall already running, **power-cycle/restart the bed** so it reconnects and refreshes DNS. Do not erase its Wi-Fi settings. Restarting may reset its setpoints and leave its controls disabled; select your desired temperatures afterward.
+6. Check `docker compose logs --tail=50 mqtt` for the bed's connection, then confirm fresh `orion/<serial>/out` messages or automatic discovery in Home Assistant. If it still connects elsewhere, inspect the bed's DHCP DNS settings and resolver cache, and check whether its VLAN uses a different DNS server.
+
+If HA and the bed are on separate VLANs, allow each to initiate TCP connections to the broker on port 1883, with return traffic allowed. Also allow the bed to reach its local DNS resolver over UDP/TCP 53. Router firewall rules alone usually do not filter devices communicating directly on the same LAN, which is why the broker host allowlist matters.
+
+App/cloud reporting and schedules with this override have not been verified. To return to the original endpoint, remove the DNS override (and any hostname-specific AAAA override), apply the DNS change, and restart the bed to refresh its connection.
 
 ## Install with HACS
 
