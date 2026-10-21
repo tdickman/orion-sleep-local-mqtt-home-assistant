@@ -5,7 +5,7 @@ PLATFORMS = ["climate", "switch", "light", "button", "sensor", "binary_sensor"]
 MIN_TEMP = 10.0  # 50 °F
 MAX_TEMP = 45.0  # 113 °F
 STALE_SECONDS = 30
-SLEEP_SENSOR_STALE_SECONDS = 30
+SLEEP_SENSOR_STALE_SECONDS = 15
 SLEEP_STATUS_NAMES = {
     0: "normal",
     1: "initializing",

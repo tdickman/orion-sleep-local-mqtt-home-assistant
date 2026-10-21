@@ -311,7 +311,7 @@ The mappings are supported by our occupied-bed observations and the Reddit autho
 The bed can keep publishing MQTT status messages even if an individual Sleepace sensor has stopped updating. Starting in **0.1.8**, the integration independently tracks each sensor's internal time bytes at indexes **11–14**. They were observed changing approximately once per second on firmware 2.6.2.
 
 - On discovery, restart, or broker reconnect, the first clock value is a baseline; sleep readings remain unavailable until that sensor's clock changes, normally about a second later.
-- If the clock then stops changing for **30 seconds**, only that side's presence, heart rate, and breathing rate become unavailable. Continuing bed MQTT messages do not refresh the sleep-sensor timer.
+- If the clock then stops changing for **15 seconds** (since version **0.1.9**), only that side's presence, heart rate, and breathing rate become unavailable. Continuing bed MQTT messages or changes to measurement values do not refresh the sleep-sensor timer. The timeout measures elapsed local monotonic time since the internal timestamp last changed; it does not compare the sensor's clock value to wall-clock time.
 - Any valid clock change restores freshness, including changes caused by a sensor reset or counter wrap. The internal value is not interpreted as wall-clock time.
 - Missing/malformed time bytes invalidate freshness immediately. A valid baseline followed by a clock change is required to recover.
 - Temperature controls, lights, and the other side's sleep readings remain independent. Missing bed telemetry still makes the whole bed unavailable after 30 seconds.
@@ -332,7 +332,7 @@ Each side has a diagnostic **Sleep sensor status** entity. While the bed is onli
 | `unknown_status` | A valid byte with an undocumented status code |
 | `waiting_for_update` | Clock baseline received; waiting for evidence of sensor activity |
 | `missing_data` | No valid internal sensor clock is available |
-| `stale` | No clock change for 30 seconds, even if bed MQTT telemetry continues |
+| `stale` | No clock change for 15 seconds, even if bed MQTT telemetry continues |
 
 The diagnostic includes a `status_code` attribute with the latest reported raw code (or null if missing). Freshness states take precedence over the reported status label. A malformed status with a live clock appears as unknown. These labels describe firmware observations, **not diagnoses of apnea or a cardiac event**. Downloadable diagnostics continue to exclude sleep status, sensor clocks, and biometric readings.
 

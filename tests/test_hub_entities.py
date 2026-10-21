@@ -327,11 +327,14 @@ async def test_sensor_clock_freshness_is_independent_of_bed_telemetry(hub, statu
         assert hub.sleep_sensor_available("TESTBED", "left")
         assert hub.sleep_sensor_available("TESTBED", "right")
         # The bed and right clock continue updating while left freezes.
-        now += 29
+        now += 14
         status["sensors"]["sensor2"][11] += 1
+        # Changing readings cannot refresh a frozen internal sensor timestamp.
+        status["sensors"]["sensor1"][15:18] = [60, 14, 0]
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         assert hub.sleep_sensor_available("TESTBED", "left")
         now += 1
+        status["sensors"]["sensor1"][15] = 61
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         assert hub.available("TESTBED")
         assert hub.sleep_sensor_freshness("TESTBED", "left") == "stale"
@@ -372,7 +375,7 @@ async def test_initial_frozen_clock_eventually_reports_stale(hub, status):
     with patch("custom_components.orion_local.hub.time", SimpleNamespace(monotonic=lambda: now)):
         hub._connection(False)
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
-        now += 30
+        now += 15
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         assert hub.sleep_sensor_freshness("TESTBED", "left") == "stale"
         assert not hub.sleep_sensor_available("TESTBED", "left")

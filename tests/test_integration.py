@@ -123,7 +123,7 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         assert hass.states.get(left_br).state == "unknown"
         assert float(hass.states.get(right_hr).state) == 66
         # A frozen left sleep sensor must not disable right or climate controls.
-        hub.sensor_changed[("TESTBED", "left")] -= 31
+        hub.sensor_changed[("TESTBED", "left")] -= 16
         hub._tick(None)
         await hass.async_block_till_done()
         assert hass.states.get(left_hr).state == "unavailable"
