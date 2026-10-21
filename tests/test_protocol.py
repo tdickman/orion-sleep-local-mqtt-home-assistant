@@ -102,3 +102,37 @@ def test_allowed_commands(command):
 def test_reject_commands(command):
     with pytest.raises(ValueError):
         validate_command(command)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (5, False),
+        (0, True),
+        (4, True),
+        (6, True),
+        (255, True),
+        (None, None),
+        (True, None),
+        ("5", None),
+        (-1, None),
+        (256, None),
+        (4.5, None),
+        (float("nan"), None),
+    ],
+)
+def test_presence_mapping_and_invalid_status(status, value, expected):
+    status["sensors"]["sensor1"][17] = value
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_occupancy"] is expected
+    assert data["right_occupancy"] is False
+
+
+@pytest.mark.parametrize(
+    "sensors", [None, {}, {"sensor1": []}, {"sensor1": [5] * 17}, {"sensor1": "not an array"}]
+)
+def test_presence_missing_data_is_unknown(status, sensors):
+    status["sensors"] = sensors
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_occupancy"] is None
+    assert data["right_occupancy"] is None

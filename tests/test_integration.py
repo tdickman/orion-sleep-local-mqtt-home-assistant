@@ -49,7 +49,29 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         registry = er.async_get(hass)
         entries = er.async_entries_for_config_entry(registry, entry.entry_id)
         assert len(entries) == 20
-        assert len([e for e in entries if e.disabled_by]) == 3
+        assert len([e for e in entries if e.disabled_by]) == 1
+        left_presence = registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, "TESTBED_left_occupancy"
+        )
+        right_presence = registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, "TESTBED_right_occupancy"
+        )
+        assert hass.states.get(left_presence).state == "off"
+        assert hass.states.get(right_presence).state == "off"
+        assert hass.states.get(left_presence).attributes["device_class"] == "occupancy"
+        status["sensors"]["sensor1"][17] = 0
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        hub._tick(None)
+        await hass.async_block_till_done()
+        assert hass.states.get(left_presence).state == "on"
+        assert hass.states.get(right_presence).state == "off"
+        status["sensors"]["sensor1"] = []
+        status["sensors"]["sensor2"][17] = 4
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        hub._tick(None)
+        await hass.async_block_till_done()
+        assert hass.states.get(left_presence).state == "unknown"
+        assert hass.states.get(right_presence).state == "on"
         device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "TESTBED")})
         await hass.services.async_call(
             DOMAIN,
@@ -97,6 +119,10 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         assert await hass.config_entries.async_unload(entry.entry_id)
         assert hub.mqtt.closed
         assert not hass.services.has_service(DOMAIN, "set_temperatures")
+        registry.async_update_entity(
+            left_presence, disabled_by=er.RegistryEntryDisabler.INTEGRATION
+        )
+        registry.async_update_entity(right_presence, disabled_by=er.RegistryEntryDisabler.USER)
         # Persisted identities return unavailable until fresh telemetry arrives.
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -104,6 +130,9 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status):
         assert "TESTBED" in hub.devices
         assert not hub.available("TESTBED")
         assert hass.states.get("climate.orion_testbed_left").state == "unavailable"
+        assert registry.async_get(left_presence).disabled_by is None
+        assert registry.async_get(right_presence).disabled_by is er.RegistryEntryDisabler.USER
+        assert hass.states.get(left_presence).state == "unavailable"
         status["serial"] = "SECOND"
         hub._message("orion/SECOND/out", json.dumps(status).encode())
         await hass.async_block_till_done()

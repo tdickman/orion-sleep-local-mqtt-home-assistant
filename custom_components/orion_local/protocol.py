@@ -106,7 +106,10 @@ def parse_status(topic: str, payload: bytes):
         arr = get("sensors", sensor)
         data[f"{side}_occupancy"] = (
             arr[17] != 5
-            if isinstance(arr, list) and len(arr) > 17 and number(arr[17]) is not None
+            if isinstance(arr, list)
+            and len(arr) > 17
+            and type(arr[17]) is int
+            and 0 <= arr[17] <= 255
             else None
         )
     rgb = tuple(number(get("led", f"idle_{c}")) for c in "rgb")

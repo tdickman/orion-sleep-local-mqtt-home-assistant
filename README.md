@@ -204,7 +204,7 @@ For manual installation, copy `custom_components/orion_local` to `/config/custom
 | Left / Right pump status sensors | Firmware-reported status |
 | Uptime sensor | Seconds since boot |
 | Fault / Safety problem binary sensors | Reported firmware fault / safety status |
-| Left / Right occupancy binary sensors | Experimental and disabled by default |
+| Left / Right presence binary sensors | Enabled by default; community-documented Sleepace presence mapping |
 
 **Every outgoing temperature is limited to 10–45°C (50–113°F)**, including service calls, matching the setpoint range reported for the Orion mobile app. HA may display converted Fahrenheit values if configured that way; MQTT commands and the custom action below always use Celsius.
 
@@ -255,10 +255,28 @@ Set the dimmer to `0`, or call `light.turn_off`, to turn the LEDs off. Setting t
 
 RGB components are **0–255** and use `IB RGB <R> <G> <B>`. The dimmer uses `IB DIMMER <0-100>`. The light entity converts HA's 0–255 brightness scale to the bed's integer percentage scale; the number entity writes percentages directly. State comes from fresh telemetry rather than assuming the command succeeded.
 
-### LED telemetry, occupancy, and reboot
+### Left and right presence
+
+Each bed exposes **Left presence** and **Right presence** binary sensors, enabled by default. They use Home Assistant's occupancy device class (`on` means detected; `off` means clear) and the [Reddit author's mapping](https://www.reddit.com/r/Orion_Sleep/comments/1va4pe0/home_assistant_integration_for_orion_now_feature/p1kxqeu/):
+
+- Left: `sensors.sensor1[17] != 5`.
+- Right: `sensors.sensor2[17] != 5`.
+- Indexes are zero-based: index 17 is the **18th array value**. A value of `5` means not present; other valid byte values mean present according to that mapping.
+- Missing/short arrays or invalid status values produce **unknown**, rather than a false absence. Loss of fresh bed telemetry makes the entities **unavailable**.
+
+Version **0.1.3** automatically enables presence entities previously disabled by the integration's experimental default. Existing unique IDs and entity IDs are preserved; manually disabled entities remain disabled. If necessary, find them under **Settings → Devices & services → Orion Sleep Local MQTT → your bed → Entities** and enable them. Older entity IDs may still contain `occupancy_experimental`.
+
+The mapping and left/right assignment are community documented. The live read-only check reported `5` on both sides across 20 fresh frames; physical occupancy transitions and side assignment have not yet been verified on this bed.
+
+### Heart rate: investigation status
+
+Orion's cloud integration exposes live heart rate from the decoded WebSocket field `status.sensors.<sensor>.heart_rate`. The local MQTT payload inspected here instead carries two **24-value raw arrays**, with no named heart-rate field. The Reddit comment confirms these are Sleepace sensor data but documents only the presence index, not a heart-rate offset or encoding.
+
+**A reliable heart-rate extraction from local MQTT has not yet been established**, so no BPM entity is exposed. Values that happen to fall in a plausible BPM range are not sufficient evidence. See [the sensor investigation notes](docs/sensor-investigation.md) for sources, observations, and what is needed to validate a mapping.
+
+### LED telemetry and reboot
 
 - LED RGB uses `led.idle_r/g/b`, the requested color. Firmware `led.r/g/b` are brightness-scaled output values. Brightness maps between HA's 0–255 and Orion's 0–100.
-- Occupancy uses the Reddit author's mapping (`sensor1[17] != 5` for left and `sensor2[17] != 5` for right), with missing/short-array handling. Occupancy transitions and physical side mapping have **not** been validated.
 - **Reboot resets targets to firmware defaults (observed 27.5°C) and disables both sides.** The integration does not automatically power on or restore targets after a user-triggered reboot. Choose valid 10–45°C targets to resume.
 - Fill and Wi-Fi erasure are deliberately not exposed or accepted by the command validator. There is no unrestricted raw-command action.
 
