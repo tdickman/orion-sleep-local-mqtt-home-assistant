@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to the Orion MQTT broker",
+        "description": "Enter the address of your anonymous local MQTT broker. Beds are discovered automatically when they send telemetry. This uses its own connection, separate from Home Assistant's MQTT integration.",
+        "data": {"host": "Broker IP address or hostname", "port": "Port"}
+      }
+    },
+    "error": {"cannot_connect": "Could not connect and subscribe. Check the broker address, port, and anonymous MQTT access.", "invalid_host": "Enter an IP address or hostname, without a URL scheme or port."},
+    "abort": {"already_configured": "This broker is already configured."}
+  }
+}

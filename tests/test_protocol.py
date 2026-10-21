@@ -1,0 +1,102 @@
+import json
+
+import pytest
+
+from custom_components.orion_local.protocol import parse_status, validate_command
+
+
+def test_real_shape(status):
+    serial, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert serial == "TESTBED"
+    assert data["rgb"] == (32, 64, 96)  # Not the brightness-scaled actual RGB.
+    assert data["left_target"] == 19
+    assert data["safety_ok"] is True
+    assert data["fault"] is False
+    assert data["left_occupancy"] is False
+    assert "secret" not in json.dumps(data)
+    assert "sensors" not in data
+
+
+@pytest.mark.parametrize(
+    "topic,payload",
+    [
+        ("orion/OTHER/out", b'{"type":"status","serial":"TESTBED"}'),
+        ("orion/TESTBED/in", b"{}"),
+        ("orion/+/out", b"{}"),
+        ("orion/TESTBED/out", b"[]"),
+        ("orion/TESTBED/out", b"\xff"),
+        ("orion/TESTBED/out", b"{"),
+        ("orion/TESTBED/out", b" " * 65537),
+    ],
+)
+def test_invalid_payload(topic, payload):
+    assert parse_status(topic, payload) is None
+
+
+def test_missing_and_malformed_optional_fields(status):
+    status.update(
+        tec=[],
+        sensors={"sensor1": [0], "sensor2": [None] * 24},
+        led=None,
+        safetyOk="invalid",
+        errors={"flag": "0"},
+        temps={"ib_left": float("nan")},
+    )
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    for key in (
+        "left_target",
+        "left_temperature",
+        "left_occupancy",
+        "right_occupancy",
+        "rgb",
+        "brightness",
+        "safety_ok",
+        "fault",
+    ):
+        assert data[key] is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "SET LEFT 17",
+        "SET RIGHT 24",
+        "SET BOTH 19",
+        "SET BOTH 19.5 20",
+        "CLEAR LEFT",
+        "CLEAR RIGHT",
+        "CLEAR BOTH",
+        "SYSTEM ON",
+        "FAN QUIET ON",
+        "FAN QUIET OFF",
+        "IB RGB 0 128 255",
+        "IB DIMMER 0",
+        "IB DIMMER 100",
+        "REBOOT",
+    ],
+)
+def test_allowed_commands(command):
+    assert validate_command(command) == command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "FILL START",
+        "ERASE WIFI",
+        "SYSTEM OFF",
+        "SET LEFT 16.9",
+        "SET BOTH 19 24.1",
+        "SET LEFT 19 20",
+        "SET BOTH nan",
+        "SET RIGHT inf",
+        "SET BOTH -100",
+        "IB RGB 256 0 0",
+        "IB DIMMER 101",
+        "IB DIMMER -1",
+        "SET BOTH 19\nREBOOT",
+    ],
+)
+def test_reject_commands(command):
+    with pytest.raises(ValueError):
+        validate_command(command)

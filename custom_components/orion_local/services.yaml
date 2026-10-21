@@ -1,0 +1,27 @@
+set_temperatures:
+  name: Set both temperatures
+  description: Set both sides in Celsius and start the system if off. Omit right to use the same temperature for both sides.
+  fields:
+    device_id:
+      name: Bed
+      required: true
+      selector:
+        device:
+          integration: orion_local
+    left:
+      name: Left temperature
+      required: true
+      selector:
+        number:
+          min: 17
+          max: 24
+          step: 0.5
+          unit_of_measurement: °C
+    right:
+      name: Right temperature
+      selector:
+        number:
+          min: 17
+          max: 24
+          step: 0.5
+          unit_of_measurement: °C
