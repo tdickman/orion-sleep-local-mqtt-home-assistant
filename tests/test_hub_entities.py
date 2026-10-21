@@ -117,8 +117,17 @@ async def test_dynamic_discovery_deduplicates(hub):
 
 async def test_diagnostics_allowlist(hub):
     hub.devices["TESTBED"]["wifi"] = {"password": "secret"}
+    hub.devices["TESTBED"].update(left_heart_rate=60, right_breathing_rate=14)
     text = json.dumps(await async_get_config_entry_diagnostics(hub.hass, hub.entry))
-    for private in ("TESTBED", "localhost", "secret", "occupancy", "target"):
+    for private in (
+        "TESTBED",
+        "localhost",
+        "secret",
+        "occupancy",
+        "target",
+        "heart_rate",
+        "breathing_rate",
+    ):
         assert private not in text
 
 

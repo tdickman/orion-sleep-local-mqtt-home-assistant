@@ -206,6 +206,8 @@ For manual installation, copy `custom_components/orion_local` to `/config/custom
 | Uptime sensor | Seconds since boot |
 | Fault / Safety problem binary sensors | Reported firmware fault / safety status |
 | Left / Right presence binary sensors | Enabled by default; community-documented Sleepace presence mapping |
+| Left / Right heart rate sensors | Local Sleepace readings in BPM; observational mapping |
+| Left / Right breathing rate sensors | Local Sleepace readings in breaths/min; observational mapping |
 
 **Every outgoing temperature is limited to 10–45°C (50–113°F)**, including service calls, matching the setpoint range reported for the Orion mobile app. HA may display converted Fahrenheit values if configured that way; MQTT commands and the custom action below always use Celsius.
 
@@ -289,13 +291,19 @@ Each bed exposes **Left presence** and **Right presence** binary sensors, enable
 
 Version **0.1.3** automatically enables presence entities previously disabled by the integration's experimental default. Existing unique IDs and entity IDs are preserved; manually disabled entities remain disabled. If necessary, find them under **Settings → Devices & services → Orion Sleep Local MQTT → your bed → Entities** and enable them. Older entity IDs may still contain `occupancy_experimental`.
 
-The mapping and left/right assignment are community documented. The live read-only check reported `5` on both sides across 20 fresh frames; physical occupancy transitions and side assignment have not yet been verified on this bed.
+The mapping and left/right assignment are community documented. Empty-bed captures reported `5` on both sides. An occupied capture with one person on the left reported presence on **both** sensors: the sensing areas can overlap, so presence on both sides does not necessarily mean two people are in bed.
 
-### Heart rate: investigation status
+### Heart rate and breathing rate
 
-Orion's cloud integration exposes live heart rate from the decoded WebSocket field `status.sensors.<sensor>.heart_rate`. The local MQTT payload inspected here instead carries two **24-value raw arrays**, with no named heart-rate field. The Reddit comment confirms these are Sleepace sensor data but documents only the presence index, not a heart-rate offset or encoding.
+Version **0.1.7** adds four enabled-by-default local sensors: **Left heart rate**, **Right heart rate**, **Left breathing rate**, and **Right breathing rate**. No cloud connection is required. Each uses the corresponding Sleepace array (`sensor1` for left, `sensor2` for right):
 
-**A reliable heart-rate extraction from local MQTT has not yet been established**, so no BPM entity is exposed. Values that happen to fall in a plausible BPM range are not sufficient evidence. See [the sensor investigation notes](docs/sensor-investigation.md) for sources, observations, and what is needed to validate a mapping.
+- **Index 15:** heart rate in BPM. An occupied-bed capture closely matched the user's approximate reference heart rate.
+- **Index 16:** breathing rate in breaths/min. Observed values were consistent with resting breathing, but were not independently measured against a respiratory reference.
+- **Index 17:** presence/status, as described above.
+
+These are **observational mappings**, not a manufacturer-verified frame specification. The earlier hypothesis that index 16 was heart rate was rejected by the occupied capture. Readings of `0` or `255`, malformed/missing values, or a side reporting no presence become **unknown** rather than zero. Both vitals require a valid presence reading; stale telemetry makes them **unavailable**. Readings are not smoothed or combined across sides.
+
+**One person can be picked up by both sensors**, as observed during testing. Left/right identifies the sensor location, not a guaranteed separate person's pulse. Movement may affect readings; these are not medical measurements. Heart rate, breathing rate, occupancy, and raw sensor arrays are omitted from integration diagnostics. See [the sensor investigation notes](docs/sensor-investigation.md) for evidence and remaining validation limits.
 
 ### LED telemetry and reboot
 

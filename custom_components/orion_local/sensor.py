@@ -1,4 +1,4 @@
-"""Telemetry sensors, without speculative mappings of undocumented values."""
+"""Telemetry sensors, including observationally mapped Sleepace readings."""
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
@@ -24,6 +24,10 @@ SENSORS = [
     ("left_pump", "Left pump status", None, None),
     ("right_pump", "Right pump status", None, None),
     ("uptime", "Uptime", SensorDeviceClass.DURATION, UnitOfTime.SECONDS),
+    ("left_heart_rate", "Left heart rate", None, "bpm"),
+    ("right_heart_rate", "Right heart rate", None, "bpm"),
+    ("left_breathing_rate", "Left breathing rate", None, "breaths/min"),
+    ("right_breathing_rate", "Right breathing rate", None, "breaths/min"),
 ]
 
 
@@ -43,7 +47,11 @@ class OrionSensor(OrionEntity, SensorEntity):
         self._attr_native_unit_of_measurement = unit
         if unit:
             self._attr_state_class = SensorStateClass.MEASUREMENT
-        if "temperature" not in key and key != "system_state":
+        if key.endswith("_heart_rate"):
+            self._attr_icon = "mdi:heart-pulse"
+        elif key.endswith("_breathing_rate"):
+            self._attr_icon = "mdi:lungs"
+        elif "temperature" not in key and key != "system_state":
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property

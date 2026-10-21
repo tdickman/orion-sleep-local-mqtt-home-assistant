@@ -53,7 +53,7 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         assert hass.states.get("climate.orion_testbed_left").attributes["max_temp"] == 45
         registry = er.async_get(hass)
         entries = er.async_entries_for_config_entry(registry, entry.entry_id)
-        assert len(entries) == 19
+        assert len(entries) == 23
         assert len([e for e in entries if e.disabled_by]) == 1
         left_presence = registry.async_get_entity_id(
             "binary_sensor", DOMAIN, "TESTBED_left_occupancy"
@@ -77,6 +77,34 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         await hass.async_block_till_done()
         assert hass.states.get(left_presence).state == "unknown"
         assert hass.states.get(right_presence).state == "on"
+        left_hr = "sensor.orion_testbed_left_heart_rate"
+        right_hr = "sensor.orion_testbed_right_heart_rate"
+        left_br = "sensor.orion_testbed_left_breathing_rate"
+        right_br = "sensor.orion_testbed_right_breathing_rate"
+        assert hass.states.get(left_hr).state == "unknown"
+        status["sensors"]["sensor1"] = [0] * 15 + [60, 14, 0]
+        status["sensors"]["sensor2"] = [0] * 15 + [66, 16, 4]
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        hub._tick(None)
+        await hass.async_block_till_done()
+        for entity_id, value, unit in (
+            (left_hr, 60, "bpm"),
+            (right_hr, 66, "bpm"),
+            (left_br, 14, "breaths/min"),
+            (right_br, 16, "breaths/min"),
+        ):
+            state = hass.states.get(entity_id)
+            assert float(state.state) == value
+            assert state.attributes["unit_of_measurement"] == unit
+            assert state.attributes["state_class"] == "measurement"
+            assert registry.async_get(entity_id).entity_category is None
+        status["sensors"]["sensor1"][17] = 5
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        hub._tick(None)
+        await hass.async_block_till_done()
+        assert hass.states.get(left_hr).state == "unknown"
+        assert hass.states.get(left_br).state == "unknown"
+        assert float(hass.states.get(right_hr).state) == 66
         device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "TESTBED")})
         await hass.services.async_call(
             DOMAIN,
@@ -144,12 +172,13 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         assert registry.async_get(left_presence).disabled_by is None
         assert registry.async_get(right_presence).disabled_by is er.RegistryEntryDisabler.USER
         assert hass.states.get(left_presence).state == "unavailable"
+        assert hass.states.get(left_hr).state == "unavailable"
         assert registry.async_get(old_dimmer.entity_id) is None
         assert registry.async_get_entity_id("light", DOMAIN, "TESTBED_led") == light_id
         status["serial"] = "SECOND"
         hub._message("orion/SECOND/out", json.dumps(status).encode())
         await hass.async_block_till_done()
         assert hass.states.get("climate.orion_second_left") is not None
-        assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 38
+        assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 46
         assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_stop()

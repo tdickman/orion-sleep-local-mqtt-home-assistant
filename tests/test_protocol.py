@@ -203,3 +203,38 @@ def test_both_converted_setpoints_confirm_independently():
     assert command_confirmed("SET BOTH 21.3889 21.1111", data, {})
     data["right_target"] = 21.12
     assert not command_confirmed("SET BOTH 21.3889 21.1111", data, {})
+
+
+def test_vital_signs_use_observed_indexes_and_keep_sides_separate(status):
+    status["sensors"]["sensor1"][15:18] = [60, 14, 0]
+    status["sensors"]["sensor2"][15:18] = [66, 16, 4]
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_heart_rate"] == 60
+    assert data["left_breathing_rate"] == 14
+    assert data["right_heart_rate"] == 66
+    assert data["right_breathing_rate"] == 16
+
+
+@pytest.mark.parametrize("value", [0, 255, -1, 256, None, True, "60", 60.5])
+def test_invalid_vital_readings_are_unknown(status, value):
+    status["sensors"]["sensor1"][15:18] = [value, value, 0]
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_heart_rate"] is None
+    assert data["left_breathing_rate"] is None
+
+
+@pytest.mark.parametrize(
+    "sensor", [None, [], [60] * 17, [0] * 15 + [60, 14, 5], [0] * 15 + [60, 14, None]]
+)
+def test_vital_signs_require_valid_presence(status, sensor):
+    status["sensors"]["sensor1"] = sensor
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_heart_rate"] is None
+    assert data["left_breathing_rate"] is None
+
+
+def test_vital_metrics_validate_independently(status):
+    status["sensors"]["sensor1"][15:18] = [255, 14, 0]
+    _, data = parse_status("orion/TESTBED/out", json.dumps(status).encode())
+    assert data["left_heart_rate"] is None
+    assert data["left_breathing_rate"] == 14

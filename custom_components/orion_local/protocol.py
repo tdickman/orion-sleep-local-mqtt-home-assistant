@@ -155,6 +155,12 @@ def parse_status(topic: str, payload: bytes):
             and 0 <= arr[17] <= 255
             else None
         )
+        # Observed on Orion/Sleepace: index 15 tracks heart rate, index 16
+        # breathing rate. Suppress absent/invalid readings rather than reporting
+        # zero BPM; 0 and 255 are the cloud decoder's no-reading sentinels.
+        for metric, index in (("heart_rate", 15), ("breathing_rate", 16)):
+            value = arr[index] if data[f"{side}_occupancy"] is True else None
+            data[f"{side}_{metric}"] = value if type(value) is int and 0 < value < 255 else None
     rgb = tuple(number(get("led", f"idle_{c}")) for c in "rgb")
     data["rgb"] = rgb if all(v is not None and 0 <= v <= 255 for v in rgb) else None
     if data["brightness"] is not None and not 0 <= data["brightness"] <= 100:
