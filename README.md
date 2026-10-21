@@ -189,6 +189,8 @@ For manual installation, copy `custom_components/orion_local` to `/config/custom
 
 ## Entities per bed
 
+**Side orientation:** Left and right are from your perspective while lying on your back in the bed, with your head at the headboard. The **left side is on your right when standing at the foot of the bed facing the headboard**. This applies to the side-specific controls and sensors.
+
 | Entity | Behavior |
 | --- | --- |
 | Left / Right climate | Temperature, target, enable/disable; automatic heating/cooling (`heat_cool`) |
