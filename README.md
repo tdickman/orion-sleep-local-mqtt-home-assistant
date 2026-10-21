@@ -290,6 +290,10 @@ Each bed exposes **Left presence** and **Right presence** binary sensors, enable
 - Starting in **0.1.8**, `1` (initializing), `255` (invalid), missing status, and unrecognized status codes produce **unknown**, rather than a false presence or absence.
 - Missing/invalid sensor timestamps, frozen sensor data, or loss of fresh bed telemetry make the entities **unavailable**. See the per-side freshness rules below.
 
+Starting in **0.1.10**, presence must remain occupied for **3 seconds**, with the sensor's internal timestamp continuing to advance, before the binary sensor switches to **detected**. This filters brief false-positive reports: a read-only capture reproduced `5 → 0 → 5` pulses lasting approximately half a second on each side. During a pending detection, an already-clear sensor stays clear; a sensor without a known state stays unknown. Clear (`5`) and invalid/initializing states take effect immediately and reset the confirmation period. Sustained occupied states, including movement, keep an established detection active.
+
+The confirmation period is independent per side and resets after stale data or a broker reconnect. Repeated MQTT frames with an unchanged internal sensor timestamp cannot complete it. The diagnostic sleep-status entity still shows raw status changes immediately; heart-rate and breathing-rate readings are not delayed by this presence filter.
+
 Version **0.1.3** automatically enables presence entities previously disabled by the integration's experimental default. Existing unique IDs and entity IDs are preserved; manually disabled entities remain disabled. If necessary, find them under **Settings → Devices & services → Orion Sleep Local MQTT → your bed → Entities** and enable them. Older entity IDs may still contain `occupancy_experimental`.
 
 The mapping and left/right assignment are community documented. Empty-bed captures reported `5` on both sides. An occupied capture with one person on the left reported presence on **both** sensors: the sensing areas can overlap, so presence on both sides does not necessarily mean two people are in bed.

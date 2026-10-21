@@ -13,6 +13,7 @@ from homeassistant.helpers.storage import Store
 from .const import (
     COMMAND_CONFIRM_TIMEOUT,
     DOMAIN,
+    PRESENCE_CONFIRM_SECONDS,
     REBOOT_CONFIRM_TIMEOUT,
     SLEEP_SENSOR_STALE_SECONDS,
     STALE_SECONDS,
@@ -32,6 +33,8 @@ class OrionHub:
         self.sensor_times = {}
         self.sensor_changed = {}
         self.sensor_confirmed = set()
+        self.presence_started = {}
+        self.presence_states = {}
         self.locks = {}
         self.start_requested = {}
         self.pending = {}
@@ -81,6 +84,33 @@ class OrionHub:
     def sleep_sensor_available(self, serial, side):
         return self.available(serial) and self.sleep_sensor_freshness(serial, side) == "fresh"
 
+    def presence_state(self, serial, side):
+        if not self.sleep_sensor_available(serial, side):
+            return None
+        return self.presence_states.get((serial, side))
+
+    def _reset_presence(self, serial, side):
+        key = (serial, side)
+        self.presence_started.pop(key, None)
+        self.presence_states[key] = None
+
+    def _update_presence(self, serial, side):
+        key = (serial, side)
+        if not self.sleep_sensor_available(serial, side):
+            self._reset_presence(serial, side)
+            return
+        occupied = self.devices[serial].get(f"{side}_occupancy")
+        if occupied is not True:
+            # Clear and unknown are immediate; only detection is delayed.
+            self.presence_started.pop(key, None)
+            self.presence_states[key] = occupied
+            return
+        started = self.presence_started.setdefault(key, time.monotonic())
+        # Repeated MQTT frames with a frozen sensor clock cannot complete the
+        # delay. Require clock activity spanning the confirmation period.
+        if self.sensor_changed[key] - started >= PRESENCE_CONFIRM_SECONDS:
+            self.presence_states[key] = True
+
     @callback
     def _connection(self, connected):
         if not connected:
@@ -88,6 +118,8 @@ class OrionHub:
             self.sensor_times.clear()
             self.sensor_changed.clear()
             self.sensor_confirmed.clear()
+            self.presence_started.clear()
+            self.presence_states.clear()
             self._fail_pending("MQTT disconnected before command confirmation; outcome unknown")
         self.dirty = True
         async_dispatcher_send(self.hass, signal(self.entry.entry_id))
@@ -99,6 +131,11 @@ class OrionHub:
             return
         serial, data = parsed
         new = serial not in self.devices
+        for side in ("left", "right"):
+            # A returning frame must not carry a detection candidate across a
+            # stale period, even if the availability timer has not run yet.
+            if not self.sleep_sensor_available(serial, side):
+                self._reset_presence(serial, side)
         self.devices[serial] = data
         if data.get("system_state") == "SYSTEM_ON":
             self.start_requested.pop(serial, None)
@@ -119,6 +156,7 @@ class OrionHub:
                 self.sensor_times[key] = sensor_time
                 self.sensor_changed[key] = self.seen[serial]
                 self.sensor_confirmed.add(key)
+            self._update_presence(serial, side)
         if pending := self.pending.get(serial):
             command, before, future = pending
             if not future.done() and command_confirmed(command, data, before):
@@ -130,6 +168,10 @@ class OrionHub:
 
     @callback
     def _tick(self, now):
+        for serial in self.devices:
+            for side in ("left", "right"):
+                if not self.sleep_sensor_available(serial, side):
+                    self._reset_presence(serial, side)
         available = {s for s in self.devices if self.available(s)}
         freshness = {
             (serial, side): self.sleep_sensor_freshness(serial, side)

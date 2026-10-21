@@ -45,5 +45,7 @@ class OrionBinarySensor(OrionEntity, BinarySensorEntity):
 
     @property
     def is_on(self):
+        if self.key.endswith("_occupancy"):
+            return self.hub.presence_state(self.serial, self.key.split("_", 1)[0])
         value = self.data.get(self.key)
         return not value if self.key == "safety_ok" and value is not None else value

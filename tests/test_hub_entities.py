@@ -9,6 +9,7 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from custom_components.orion_local.binary_sensor import OrionBinarySensor
 from custom_components.orion_local.climate import OrionClimate
 from custom_components.orion_local.diagnostics import async_get_config_entry_diagnostics
 from custom_components.orion_local.entity import setup_entities
@@ -379,3 +380,107 @@ async def test_initial_frozen_clock_eventually_reports_stale(hub, status):
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         assert hub.sleep_sensor_freshness("TESTBED", "left") == "stale"
         assert not hub.sleep_sensor_available("TESTBED", "left")
+
+
+@pytest.fixture
+def presence_stream(hub, status):
+    clock = [100.0]
+    with patch(
+        "custom_components.orion_local.hub.time", SimpleNamespace(monotonic=lambda: clock[0])
+    ):
+        hub._connection(False)
+        hub._connection(True)
+
+        def feed(seconds, left, right=5, *, advance=True):
+            clock[0] = 100.0 + seconds
+            for sensor, code in (("sensor1", left), ("sensor2", right)):
+                status["sensors"][sensor][17] = code
+                if advance:
+                    status["sensors"][sensor][11] = (status["sensors"][sensor][11] + 1) % 256
+            hub._message("orion/TESTBED/out", json.dumps(status).encode())
+            hub._tick(None)
+
+        feed(0, 5)
+        feed(1, 5)
+        yield feed
+
+
+async def test_brief_presence_pulses_do_not_trigger_but_sustained_presence_does(
+    hub, presence_stream
+):
+    sensor = OrionBinarySensor(hub, "TESTBED", "left_occupancy", "Left presence")
+    assert sensor.is_on is False
+    # Reproduce observed 5 -> 0 -> 5 pulses, each shorter than one second.
+    for start in (2, 4, 6):
+        presence_stream(start, 0)
+        assert hub.devices["TESTBED"]["left_occupancy"] is True
+        assert sensor.is_on is False
+        presence_stream(start + 0.6, 5)
+        assert sensor.is_on is False
+    presence_stream(8, 0)
+    presence_stream(10.9, 0)
+    assert sensor.is_on is False
+    presence_stream(11, 4)  # Movement is still an occupied status.
+    assert sensor.is_on is True
+    presence_stream(12, 0)
+    assert sensor.is_on is True
+    presence_stream(13, 5)
+    assert sensor.is_on is False  # No delay when leaving.
+
+
+async def test_presence_confirmation_is_independent_per_side(hub, presence_stream):
+    presence_stream(2, 0)
+    presence_stream(3, 5, 0)
+    presence_stream(5, 0, 0)
+    assert hub.presence_state("TESTBED", "left") is False
+    assert hub.presence_state("TESTBED", "right") is False
+    presence_stream(6, 0, 0)
+    assert hub.presence_state("TESTBED", "left") is False
+    assert hub.presence_state("TESTBED", "right") is True
+    presence_stream(8, 0, 5)
+    assert hub.presence_state("TESTBED", "left") is True
+    assert hub.presence_state("TESTBED", "right") is False
+
+
+@pytest.mark.parametrize("invalid", [1, 255, None, 8])
+async def test_invalid_presence_immediately_resets_confirmation(hub, presence_stream, invalid):
+    presence_stream(2, 0)
+    presence_stream(5, 0)
+    assert hub.presence_state("TESTBED", "left") is True
+    presence_stream(6, invalid)
+    assert hub.presence_state("TESTBED", "left") is None
+    presence_stream(7, 0)
+    presence_stream(9.9, 0)
+    assert hub.presence_state("TESTBED", "left") is None
+    presence_stream(10, 0)
+    assert hub.presence_state("TESTBED", "left") is True
+
+
+async def test_frozen_clock_cannot_complete_presence_confirmation(hub, presence_stream):
+    presence_stream(2, 0)
+    presence_stream(5, 0, advance=False)
+    assert hub.presence_state("TESTBED", "left") is False
+    presence_stream(16, 0, advance=False)
+    assert hub.presence_state("TESTBED", "left") is False
+    presence_stream(17, 0, advance=False)
+    assert not hub.sleep_sensor_available("TESTBED", "left")
+    assert hub.presence_state("TESTBED", "left") is None
+    presence_stream(18, 0)
+    presence_stream(20.9, 0)
+    assert hub.presence_state("TESTBED", "left") is None
+    presence_stream(21, 0)
+    assert hub.presence_state("TESTBED", "left") is True
+
+
+async def test_reconnect_requires_new_presence_confirmation(hub, presence_stream):
+    presence_stream(2, 0)
+    hub._connection(False)
+    hub._connection(True)
+    presence_stream(3, 0)
+    assert not hub.sleep_sensor_available("TESTBED", "left")
+    presence_stream(4, 0)
+    assert hub.sleep_sensor_available("TESTBED", "left")
+    presence_stream(6.9, 0)
+    assert hub.presence_state("TESTBED", "left") is None
+    presence_stream(7, 0)
+    assert hub.presence_state("TESTBED", "left") is True

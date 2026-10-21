@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from homeassistant import config_entries, loader
@@ -27,7 +28,11 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
     async def start(client):
         client.connected = True
 
+    clock = [100.0]
     with (
+        patch(
+            "custom_components.orion_local.hub.time", SimpleNamespace(monotonic=lambda: clock[0])
+        ),
         patch("custom_components.orion_local.mqtt.OrionMQTT.start", start),
         patch(
             "custom_components.orion_local.mqtt.OrionMQTT.publish", new_callable=AsyncMock
@@ -81,6 +86,13 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         hub._message("orion/TESTBED/out", json.dumps(status).encode())
         hub._tick(None)
         await hass.async_block_till_done()
+        assert hass.states.get(left_presence).state == "off"
+        assert hass.states.get(left_status).state == "normal"  # Diagnostic is unfiltered.
+        clock[0] += 3
+        status["sensors"]["sensor1"][11] += 1
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        hub._tick(None)
+        await hass.async_block_till_done()
         assert hass.states.get(left_presence).state == "on"
         assert hass.states.get(right_presence).state == "off"
         status["sensors"]["sensor1"] = []
@@ -90,6 +102,12 @@ async def test_full_setup_discovery_service_and_unload(tmp_path, status, device_
         await hass.async_block_till_done()
         assert hass.states.get(left_presence).state == "unavailable"
         assert hass.states.get(left_status).state == "missing_data"
+        assert hass.states.get(right_presence).state == "off"
+        clock[0] += 3
+        status["sensors"]["sensor2"][11] += 1
+        hub._message("orion/TESTBED/out", json.dumps(status).encode())
+        hub._tick(None)
+        await hass.async_block_till_done()
         assert hass.states.get(right_presence).state == "on"
         left_hr = "sensor.orion_testbed_left_heart_rate"
         right_hr = "sensor.orion_testbed_right_heart_rate"
